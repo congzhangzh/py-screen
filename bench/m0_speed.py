@@ -69,7 +69,12 @@ class PyScreen(Mux):
     name = "py-screen"
 
     def start(self) -> None:
+        # Window 0 is a shell, as in screen's setup. (Before 2026-11-01 02:10 the first
+        # window was whatever new_window() started, so the flood latency test typed into
+        # `yes` and measured nothing: the 5000 ms rows in m0-20261101-0124 and
+        # m1-flood-fix-20261101-0206 are void.)
         self.s = Session("bench")
+        self.s.pys("new")
 
     def attach(self) -> Term:
         t = Term(PYS + ["attach"], self.s.env, COLS, ROWS, emulate=False)
@@ -250,7 +255,7 @@ def main() -> None:
     def ratio(a: float, b: float) -> str:
         return f"{b / a:.1f}×" if a else "n/a"
     lines = [
-        f"# M0 speed: py-screen vs screen ({time.strftime('%Y-%m-%d %H:%M')})", "",
+        f"# Speed: py-screen vs screen ({time.strftime('%Y-%m-%d %H:%M')})", "",
         f"- Machine: {platform.node() and 'local desk'}, {os.cpu_count()} CPUs, Python {platform.python_version()}",
         f"- screen: {sv}, minimal screenrc (status line, 10000 scrollback)",
         f"- Both attached to a headless {COLS}x{ROWS} pty that only drains output", "",

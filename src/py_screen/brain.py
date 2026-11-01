@@ -20,6 +20,14 @@ from . import proto
 PREFIX = 0x1D                    # C-]
 FRAME = 1 / 60                   # render at most 60 times a second
 CLIENT_HIGH_WATER = 1 << 20      # a client this far behind skips frames, then gets a full redraw
+# Parsing (pyte, ~1 MB/s) is the slow part, so output is buffered raw per window and
+# parsed only when it can be seen. More than PARSE_BUDGET waiting at a frame means a
+# flood: only the last TAIL bytes are parsed, from a line start (nobody can read 256 KB
+# in 16 ms; the keeper's ring buffer still holds every byte). A hidden window keeps
+# HIDDEN_CAP bytes and is parsed when it is shown.
+PARSE_BUDGET = 256 * 1024
+TAIL = 32 * 1024
+HIDDEN_CAP = 128 * 1024
 
 # Private modes the outer terminal must mirror, because it produces the input
 # (cursor-key mode, bracketed paste, mouse reporting). pyte stores private
@@ -73,6 +81,23 @@ class Window:
     cmd: list[str]
     screen: pyte.Screen
     stream: pyte.ByteStream
+    pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
+    trimmed: bool = False        # bytes were dropped: repaint (SIGWINCH) when shown
+    skipped: int = 0             # bytes never parsed, for `pys ls`
+
+    def drain(self) -> bool:
+        """Parse what is pending (only its tail during a flood). True if bytes were dropped."""
+        if not self.pending:
+            return False
+        data, dropped = self.pending, False
+        if len(data) > PARSE_BUDGET:
+            cut = data.find(b"\n", len(data) - TAIL)
+            start = cut + 1 if cut >= 0 else len(data) - TAIL
+            self.skipped += start
+            data, dropped = data[start:], True
+        self.pending = bytearray()
+        self.stream.feed(bytes(data))
+        return dropped
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int) -> "Window":
@@ -127,15 +152,24 @@ class Brain:
             while True:
                 kind, wid, body = await proto.read_frame(r)
                 if kind == proto.DATA:
+                    assert isinstance(body, bytes)
                     w = self.wins.get(wid)
                     if w:
-                        w.stream.feed(body)  # type: ignore[arg-type]
-                        if wid == self.current:
+                        w.pending += body
+                        if wid == self.current and self.clients:
                             self.schedule_render()
-                        elif w.screen.title != getattr(w, "_seen_title", None):
-                            self.status_dirty = True
+                        elif len(w.pending) > HIDDEN_CAP:
+                            n = len(w.pending) - HIDDEN_CAP
+                            del w.pending[:n]
+                            w.skipped += n
+                            w.trimmed = True
+                    # Ack at once: the bytes are ours now, parsing is lazy.
+                    self.to_keeper(proto.pack_ctl({"op": "ack", "wid": wid, "n": len(body)}))
                 else:
                     self.on_keeper_ctl(body)  # type: ignore[arg-type]
+                # readexactly() doesn't suspend when its buffer already holds the bytes,
+                # so without this a flood would never let the client's keys be read.
+                await asyncio.sleep(0)
         except (asyncio.IncompleteReadError, ConnectionError):
             log("keeper link lost")
             self.quit(1)
@@ -146,6 +180,9 @@ class Brain:
             for x in m["windows"]:
                 self.add_window(x)
         elif op == "replayed":
+            for w in self.wins.values():          # a 2 MB replay is parsed as a tail only
+                if w.wid != self.current and len(w.pending) > HIDDEN_CAP:
+                    del w.pending[: len(w.pending) - HIDDEN_CAP]
             self.ready.set()
             asyncio.get_running_loop().create_task(self.nudge_all())
         elif op == "spawned":
@@ -185,12 +222,15 @@ class Brain:
     async def nudge_all(self) -> None:
         """After a replay, change each pty's size by one row and back: SIGWINCH makes
         full-screen apps repaint whatever the replayed bytes could not rebuild."""
-        for w in self.wins.values():
+        await self.nudge(list(self.wins.values()))
+
+    async def nudge(self, wins: list[Window]) -> None:
+        for w in wins:
             s = w.screen
             self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
                                            "cols": s.columns, "rows": max(1, s.lines - 1)}))
         await asyncio.sleep(0.05)
-        for w in self.wins.values():
+        for w in wins:
             s = w.screen
             self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
                                            "cols": s.columns, "rows": s.lines}))
@@ -219,6 +259,10 @@ class Brain:
     def select(self, wid: int) -> None:
         if wid in self.wins and wid != self.current:
             self.current = wid
+            w = self.wins[wid]
+            if w.trimmed:                         # hidden output was dropped: repaint TUIs
+                w.trimmed = False
+                asyncio.get_running_loop().create_task(self.nudge([w]))
             self.mark_all_stale()
 
     def step(self, d: int) -> None:
@@ -274,9 +318,8 @@ class Brain:
         self.last_render = time.monotonic()
         w = self.wins.get(self.current) if self.current is not None else None
         if w is None or not self.clients:
-            if w:
-                w.screen.dirty.clear()
-            return
+            return                                # parse later, when someone looks
+        w.drain()
         s = w.screen
         dirty = sorted(s.dirty)
         s.dirty.clear()
@@ -341,6 +384,10 @@ class Brain:
         self.set_size(hello["cols"], hello["rows"])
         if not self.wins:
             await self.spawn(cwd=hello.get("cwd"))
+        cur = self.wins.get(self.current) if self.current is not None else None
+        if cur and cur.trimmed:                   # output dropped while detached: repaint
+            cur.trimmed = False
+            asyncio.get_running_loop().create_task(self.nudge([cur]))
         self.mark_all_stale()
         try:
             while True:
@@ -414,13 +461,15 @@ class Brain:
             return {"ok": True, "pid": os.getpid(), "current": self.current,
                     "clients": len(self.clients), "size": [self.cols, self.rows],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
-                                 "cmd": w.cmd, "cwd": w.cwd()} for w in
+                                 "cmd": w.cmd, "cwd": w.cwd(), "skipped": w.skipped,
+                                 "pending": len(w.pending)} for w in
                                 (self.wins[i] for i in self.order)]}
         if cmd == "send":
             self.to_keeper(proto.pack(proto.DATA, m["wid"], m["text"].encode()))
             return {"ok": True}
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
+            w.drain()
             return {"ok": True, "lines": w.screen.display,
                     "cursor": [w.screen.cursor.x, w.screen.cursor.y]}
         if cmd == "new":

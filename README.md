@@ -4,7 +4,7 @@ A terminal workspace of my own, in Python: not a clone of screen or tmux, built 
 made more powerful and improved by daily use. The design is in [`spec/`](spec/); the
 current version is [`spec/spec.v2.md`](spec/spec.v2.md).
 
-Status: **M0 spike** (Linux). One server, many windows, attach/detach, hot reload.
+Status: **M1 in progress** (Linux; Windows pieces checked on CI). One server, many windows, attach/detach, hot reload, flood-safe typing.
 
 ## How it works
 
@@ -20,6 +20,23 @@ client (pys attach) ──► brain (Python, restartable) ──► keeper (tiny
   (SIGWINCH) so full-screen apps repaint.
 - **client** puts the terminal in raw mode, forwards keys and size, prints frames, and
   reconnects by itself across a brain reload.
+
+### Floods (M1)
+
+Parsing (pyte, about 1 MB/s) is the slow part, so a flood must never cost typing:
+
+- The keeper gives each window a **credit** of 256 KB un-acked output; past it, it stops
+  reading that pty until the brain acks. One window can't fill the shared stream, so the
+  echo of another never waits behind megabytes of it.
+- The brain **yields after every frame** (`readexactly()` doesn't suspend when its buffer
+  already holds the bytes, so a flood would otherwise starve the client's keys).
+- Output is kept raw and **parsed only when it can be seen**. When more than 256 KB waits
+  at a frame, only the last 32 KB is parsed, from a line start. A hidden window keeps its
+  last 128 KB, is parsed when shown, and gets a `SIGWINCH` nudge so TUIs repaint.
+  `pys ls --json` reports `skipped` bytes per window.
+
+Trade-off: bytes skipped during a flood are not in the brain's screen history. The keeper's
+2 MB ring buffer still holds them; scrollback (M2) will read from there.
 
 ## Use
 
@@ -54,5 +71,7 @@ Results of each run are kept in [`bench/results/`](bench/results/), one file per
 
 - pyte has no alternate screen: after vim exits, its last screen stays until the shell
   draws over it.
+- A hidden window's title in the status line updates only when the window is shown
+  (its output isn't parsed until then).
 - No scrollback view, splits, config file or widgets yet (M1/M2).
 - Linux only; the Windows check (pywinpty + named pipes) waits for the rig.

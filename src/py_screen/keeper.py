@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from . import proto
 
 RING_CAP = 2 * 1024 * 1024       # bytes of recent output kept per window for replay
-HIGH_WATER = 4 * 1024 * 1024     # pause reading ptys while the brain lags this much
+HIGH_WATER = 4 * 1024 * 1024     # safety net: pause every pty while the brain lags this much
+CREDIT = 256 * 1024              # per window: stop reading a pty with this much un-acked output
 
 
 def log(*a: object) -> None:
@@ -38,6 +39,8 @@ class Win:
     rows: int
     cmd: list[str]
     ring: bytearray = field(default_factory=bytearray)
+    inflight: int = 0            # bytes sent to the brain and not yet acked
+    blocked: bool = False        # reader removed because inflight > CREDIT
 
 
 class Keeper:
@@ -90,7 +93,34 @@ class Keeper:
         w.ring += data
         if len(w.ring) > RING_CAP:
             del w.ring[: len(w.ring) - RING_CAP]
+        if self.brain_w is None:
+            return
         self.to_brain(proto.pack(proto.DATA, w.wid, data))
+        # Per-window credit: one flooding window can't fill the shared stream, so the
+        # echo of another window never queues behind megabytes (head-of-line blocking).
+        w.inflight += len(data)
+        if w.inflight > CREDIT and not w.blocked and w.wid in self.wins:
+            w.blocked = True
+            if not self.paused:
+                asyncio.get_running_loop().remove_reader(w.fd)
+
+    def ack(self, wid: int, n: int) -> None:
+        w = self.wins.get(wid)
+        if not w:
+            return
+        w.inflight = max(0, w.inflight - n)
+        if w.blocked and w.inflight <= CREDIT // 2:
+            w.blocked = False
+            if not self.paused:
+                asyncio.get_running_loop().add_reader(w.fd, self.on_readable, w)
+
+    def unblock_all(self) -> None:
+        for w in self.wins.values():
+            w.inflight = 0
+            if w.blocked:
+                w.blocked = False
+                if not self.paused:
+                    asyncio.get_running_loop().add_reader(w.fd, self.on_readable, w)
 
     def reap(self, w: Win) -> None:
         loop = asyncio.get_running_loop()
@@ -127,7 +157,8 @@ class Keeper:
         self.paused = False
         loop = asyncio.get_running_loop()
         for w in self.wins.values():
-            loop.add_reader(w.fd, self.on_readable, w)
+            if not w.blocked:
+                loop.add_reader(w.fd, self.on_readable, w)
 
     async def resume_after_drain(self, bw: asyncio.StreamWriter) -> None:
         try:
@@ -140,6 +171,7 @@ class Keeper:
         if self.brain_w and not self.brain_w.is_closing():
             self.brain_w.close()
         self.brain_w = w
+        self.unblock_all()                          # a new brain starts with full credit
         self.resume()
         hello = [{"wid": x.wid, "pid": x.pid, "cols": x.cols, "rows": x.rows, "cmd": x.cmd}
                  for x in self.wins.values()]
@@ -163,7 +195,8 @@ class Keeper:
         finally:
             if self.brain_w is w:
                 self.brain_w = None
-                self.resume()                       # keep children unblocked without a brain
+                self.unblock_all()                  # keep children unblocked without a brain
+                self.resume()
             log("brain link closed")
 
     def write_pty(self, x: Win, data: bytes) -> None:
@@ -180,7 +213,9 @@ class Keeper:
 
     def on_ctl(self, m: dict) -> None:
         op = m.get("op")
-        if op == "spawn":
+        if op == "ack":
+            self.ack(m["wid"], m["n"])
+        elif op == "spawn":
             x = self.spawn(m["cmd"], m.get("cwd"), m["cols"], m["rows"])
             self.to_brain(proto.pack_ctl({"op": "spawned", "wid": x.wid, "pid": x.pid,
                                           "cols": x.cols, "rows": x.rows, "cmd": x.cmd,
