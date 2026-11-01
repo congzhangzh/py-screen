@@ -36,6 +36,13 @@ Changes on top of upstream, each its own commit (`git log -- deps/libvterm`):
    corruption). Such a region now goes back to the whole screen, as xterm resets
    margins on a resize. Not reported upstream yet.
 
+4. `src/state.c`, `savecursor` (restore, `ESC 8`, leaving `?1049`): the saved position
+   came back unclamped, so a cursor saved on row 4 and restored after a resize to 3 rows
+   sat off the screen; the next glyph read and wrote `lineinfo` past its end, and
+   libvterm's screen layer wrote through a NULL cell (AddressSanitizer, seed 103772
+   of a 5000-seed run). Clamped to the screen now, as xterm restores a cursor. Not
+   reported upstream yet.
+
 Nothing else in libvterm is changed; py-screen's own C code reaches libvterm through its
 headers and, for its own resize, the line-info arrays and allocator libvterm's state
 expects a resize callback to replace (as `screen.c` does).

@@ -577,6 +577,13 @@ static void savecursor(VTermState *state, int save)
     VTermPos oldpos = state->pos;
 
     state->pos = state->saved.pos;
+    // py-screen: the position was saved before a resize may have shrunk the screen;
+    // unclamped, the next glyph read and wrote lineinfo past its end (and screen.c's
+    // putglyph wrote through a NULL cell). Clamped, as xterm restores a cursor.
+    if(state->pos.row >= state->rows)
+      state->pos.row = state->rows - 1;
+    if(state->pos.col >= state->cols)
+      state->pos.col = state->cols - 1;
 
     settermprop_bool(state, VTERM_PROP_CURSORVISIBLE, state->saved.mode.cursor_visible);
     settermprop_bool(state, VTERM_PROP_CURSORBLINK,   state->saved.mode.cursor_blink);
