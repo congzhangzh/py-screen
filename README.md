@@ -41,14 +41,14 @@ Trade-off: bytes skipped during a flood are not in the brain's screen history. T
 ## Use
 
 ```bash
-uv sync
-uv run pys                 # attach (starts the server on first use)
-uv run pys ls [--json]     # windows
-uv run pys new [--select] [-- cmd …]
-uv run pys send 0 'make test' --enter
-uv run pys capture 0       # the window's screen as text
-uv run pys reload          # new brain, same shells
-uv run pys kill            # end everything
+uv tool install -e .       # puts `pys` in ~/.local/bin, running this checkout (edits apply on reload)
+pys                        # attach (starts the server on first use)
+pys ls [--json]     # windows
+pys new [--select] [-- cmd …]
+pys send 0 'make test' --enter
+pys capture 0       # the window's screen as text
+pys reload          # new brain, same shells
+pys kill            # end everything
 ```
 
 Keys: the prefix is **`C-a`**, or **`C-]`** when you run `pys` inside GNU screen (`$STY`
@@ -66,8 +66,15 @@ set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFI
 | `Space` or the prefix twice | toggle to the last window |
 | `w` `"` `F2` | window list (`j/k`, arrows, digits, Enter, Esc) |
 | `,` | rename the window |
+| `?` | this list, plus your config's bindings |
 | `a` | send a literal prefix |
 | `d` · `C-l` · `R` · `Q` | detach · redraw · reload the brain · quit everything |
+
+Without the prefix: `Alt-0`…`Alt-9` select, `F2` opens the list, **`Alt-Tab` /
+`Alt-Shift-Tab`** go to the next / previous window. Desktops usually keep Alt-Tab for
+themselves (GNOME: `org.gnome.desktop.wm.keybindings switch-applications`), so it reaches
+py-screen only where the desktop lets it through, e.g. over ssh from another machine.
+Inside GNU screen, screen's own `bindkey` lines may also take the Alt keys first.
 
 ### Config
 

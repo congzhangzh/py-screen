@@ -84,3 +84,28 @@ def test_splits_list_rename_widgets_reload(tmp_path):
     finally:
         t.close()
         sess.kill()
+
+
+def test_alt_tab_and_help():
+    sess = Session("m1k")
+    t = Term(PYS + ["attach"], sess.env, 120, 30)
+    try:
+        t.wait_for(" pys ")
+        sess.pys("new")
+        sess.pys("new")
+        cur = lambda: json.loads(sess.pys("ls", "--json"))["current"]
+        assert cur() == 0
+        t.send(b"\x1b\t")                                # Alt+Tab
+        wait(lambda: cur() == 1)
+        t.send(b"\x1b\t")
+        wait(lambda: cur() == 2)
+        t.send(b"\x1b\x1b[Z")                            # Alt+Shift+Tab
+        wait(lambda: cur() == 1)
+        t.send(C_RB + "?")
+        t.wait_for("py-screen keys: prefix C-]")
+        t.wait_for("Alt-Tab / Alt-Shift-Tab")
+        t.send("q")
+        t.wait_until(lambda s: "py-screen keys" not in s)
+    finally:
+        t.close()
+        sess.kill()

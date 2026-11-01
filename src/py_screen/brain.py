@@ -48,6 +48,31 @@ WIDGET_COLORS = (33, 36, 32, 37)
 UP = (b"\x1b[A", b"\x1bOA", b"k")
 DOWN = (b"\x1b[B", b"\x1bOB", b"j")
 F2 = (b"\x1bOQ", b"\x1b[12~")
+ALT_TAB = (b"\x1b\t",)                         # Alt+Tab: ESC prefix + Tab
+ALT_SHIFT_TAB = (b"\x1b\x1b[Z",)               # Alt+Shift+Tab: ESC prefix + back-tab (CSI Z)
+
+HELP = [
+    ("c, C-c", "new window in the focused window's directory"),
+    ("| / -", "split side by side / stacked, with a new window"),
+    ("\\ / _", "empty split side by side / stacked"),
+    ("h j k l", "move the focus between panes"),
+    ("r, then h l j k =", "resize mode (any other key ends it)"),
+    ("=", "equalise panes"),
+    ("x / X", "close the pane / kill the window"),
+    ("n / p, 0-9", "next / previous window, select by number"),
+    ("Space, prefix twice", "toggle to the last window"),
+    ("w  \"  F2", "window list (j k, arrows, digits, Enter, Esc)"),
+    (",", "rename the window"),
+    ("a", "send a literal prefix"),
+    ("?", "this help"),
+    ("d / C-l", "detach / redraw"),
+    ("R / Q", "reload the brain (shells stay) / quit everything"),
+]
+NO_PREFIX = [
+    ("Alt-0 .. Alt-9", "select a window"),
+    ("Alt-Tab / Alt-Shift-Tab", "next / previous window (if the desktop lets them through)"),
+    ("F2", "window list"),
+]
 
 
 def log(*a: object) -> None:
@@ -497,6 +522,24 @@ class Brain:
             out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * self.cols}")
         return "".join(out)
 
+    def help_screen(self, c: Client) -> str:
+        pfx = "C-" + chr(c.prefix + 0x60) if c.prefix < 0x1B else "C-" + chr(c.prefix + 0x40)
+        rows = [f" py-screen keys: prefix {pfx}, then", ""]
+        rows += [f"   {k:<22} {v}" for k, v in HELP]
+        if self.cfg.bind:
+            rows += ["", " from your config (prefix, then)", ""]
+            rows += [f"   {k:<22} {t}: {' '.join(a)}" for k, (t, a) in self.cfg.bind.items()]
+        rows += ["", " without the prefix", ""]
+        rows += [f"   {k:<22} {v}" for k, v in NO_PREFIX]
+        rows += ["", " any key closes this"]
+        area = self.rows - 1
+        out = []
+        for y in range(area):
+            text = rows[y] if y < len(rows) else ""
+            attr = "\x1b[0;30;46m" if y == 0 else "\x1b[0m"
+            out.append(f"\x1b[{y + 1};1H{attr}{fit(text, self.cols)}\x1b[0m")
+        return "".join(out)
+
     def render(self) -> None:
         self.render_handle = None
         self.last_render = time.monotonic()
@@ -542,8 +585,11 @@ class Brain:
                 body = body_dirty + (self.status_line(c) if self.status_dirty else "")
             if c.mode == "list":
                 body += self.window_list(c)
-            cur = "" if c.mode == "list" else tail
-            mw = set() if c.mode == "list" else want
+            elif c.mode == "help":
+                body += self.help_screen(c)
+            overlay = c.mode in ("list", "help")
+            cur = "" if overlay else tail
+            mw = set() if overlay else want
             modes_s = "".join(f"\x1b[?{m}h" for m in mw - c.modes)
             modes_s += "".join(f"\x1b[?{m}l" for m in c.modes - mw)
             c.modes = mw
@@ -646,6 +692,12 @@ class Brain:
         if not c.armed and data in F2:
             self.open_list(c)
             return
+        if not c.armed and data in ALT_TAB:
+            self.step(1)
+            return
+        if not c.armed and data in ALT_SHIFT_TAB:
+            self.step(-1)
+            return
         out = bytearray()
         for b in data:
             if c.armed:
@@ -715,6 +767,9 @@ class Brain:
             self.relayout()
         elif key in ('w', '"'):
             self.open_list(c)
+        elif key == "?":
+            c.mode = "help"
+            self.schedule_render()
         elif key == ",":
             c.mode, c.buf = "rename", ""
             self.status_dirty = True
@@ -744,7 +799,10 @@ class Brain:
         self.schedule_render()
 
     async def mode_keys(self, c: Client, data: bytes) -> None:
-        if c.mode == "list":
+        if c.mode == "help":                     # any key closes the help
+            c.mode = None
+            c.stale = True
+        elif c.mode == "list":
             if data in UP:
                 c.list_idx = max(0, c.list_idx - 1)
             elif data in DOWN:
