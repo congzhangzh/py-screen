@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: true # the first failure stops the round
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -157,6 +157,7 @@ jobs:
           - { os: macos-15, arch: arm64 }
           - { os: macos-15-intel, arch: x86_64 }
           - { os: windows-latest, arch: AMD64 }
+          - { os: windows-11-arm, arch: ARM64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
@@ -193,7 +194,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     defaults:
@@ -275,6 +276,7 @@ jobs:
                 *macosx*arm64*) os="macOS Apple Silicon" ;;
                 *macosx*x86_64*) os="macOS Intel" ;;
                 *win_amd64*) os="Windows x86_64" ;;
+                *win_arm64*) os="Windows ARM64" ;;
                 *) os=$whl ;;
               esac
               echo "| $os | \`uv tool install $base/$whl\` |"

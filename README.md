@@ -74,7 +74,7 @@ replaced. Pushes that change only docs, specs or bench results publish nothing. 
   recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
 - each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
   engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64,
-  Windows x86_64.
+  Windows x86_64 and ARM64.
 
 Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed and picks
 the wheel for your system:
