@@ -1088,7 +1088,11 @@ class Brain:
             return {"ok": True}
         if cmd == "kill":
             self.broadcast_ctl({"op": "bye"})
-            self.to_keeper(proto.pack_ctl({"op": "shutdown"}))
+            # The keeper SIGTERMs the brain as soon as it reads "shutdown". Send it on the
+            # next loop turn: on_conn writes this reply in the current one, so the reply
+            # is already in the socket and `pys kill` doesn't fail with 0 bytes read.
+            shutdown = proto.pack_ctl({"op": "shutdown"})
+            asyncio.get_running_loop().call_soon(self.to_keeper, shutdown)
             self.state_path.unlink(missing_ok=True)
             self.quit(0)
             return {"ok": True}
