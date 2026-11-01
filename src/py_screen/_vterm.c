@@ -900,7 +900,10 @@ static PyTypeObject ScreenLayerType = {
 };
 
 static struct PyModuleDef module = {
-    PyModuleDef_HEAD_INIT, "_vterm", "libvterm, the vterm screen engine.", -1, NULL,
+    PyModuleDef_HEAD_INIT,
+    .m_name = "_vterm",
+    .m_doc = "libvterm, the vterm screen engine.",
+    .m_size = -1,
 };
 
 static int add_type(PyObject *m, const char *name, PyTypeObject *type)
