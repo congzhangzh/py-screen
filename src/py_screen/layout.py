@@ -166,6 +166,42 @@ class Layout:
         sizes[j] -= delta
         par.weights = [float(s) for s in sizes]
 
+    def boundary_at(self, x: int, y: int, node: Node | None = None) -> tuple[Split, int] | None:
+        """The border under (x, y) that a drag can move: a separator column between
+        side-by-side children, or the caption line of a stacked child that has a
+        neighbour below. Returns (split, i): the border after child i."""
+        node = self.root if node is None else node
+        if isinstance(node, Pane):
+            return None
+        for c in node.children:                    # the innermost border wins
+            if r := self.boundary_at(x, y, c):
+                return r
+        for i, c in enumerate(node.children[:-1]):
+            ps = self.panes(c)
+            x0, x1 = min(p.x for p in ps), max(p.x + p.w for p in ps)
+            y0, y1 = min(p.y for p in ps), max(p.y + p.h for p in ps)
+            if node.vertical and x == x1 and y0 <= y < y1:
+                return node, i
+            if not node.vertical and y == y1 - 1 and x0 <= x < x1:
+                return node, i
+        return None
+
+    def drag(self, split: Split, i: int, pos: int) -> None:
+        """Move the border after child i to column (or caption row) pos."""
+        v = split.vertical
+        sizes = [self._extent(c, v) for c in split.children]
+        ps = self.panes(split.children[i])
+        new = pos - min(p.x for p in ps) if v else pos - min(p.y for p in ps) + 1
+        mn = MIN_W if v else MIN_H
+        delta = max(min(new - sizes[i], sizes[i + 1] - mn), mn - sizes[i])
+        sizes[i] += delta
+        sizes[i + 1] -= delta
+        split.weights = [float(s) for s in sizes]
+
+    def pane_at(self, x: int, y: int) -> Pane | None:
+        return next((p for p in self.panes()
+                     if p.x <= x < p.x + p.w and p.y <= y < p.y + p.h), None)
+
     def _extent(self, n: Node, horizontal: bool) -> int:
         ps = self.panes(n)
         if horizontal:

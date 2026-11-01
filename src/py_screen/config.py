@@ -12,6 +12,10 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
         "T": ("top", ["htop"]),              # C-a T opens a window running htop
     }
     PREFIX = "C-a"                            # default: C-] inside GNU screen, else C-a
+    MOUSE = True                              # click to focus, drag borders, wheel (default);
+                                              # False: the mouse is pys's only while the
+                                              # focused app asks for it, so plain drags
+                                              # select text in the terminal again
 """
 
 from __future__ import annotations
@@ -96,6 +100,7 @@ class Config:
     bind: dict[str, tuple[str, list[str]]]
     prefix: str | None
     error: str | None = None
+    mouse: bool = True
 
 
 def default() -> Config:
@@ -125,6 +130,7 @@ def load_config() -> Config:
         cfg.widgets = list(ns["WIDGETS"])
     cfg.bind = {k: (v[0], list(v[1])) for k, v in ns.get("BIND", {}).items()}
     cfg.prefix = ns.get("PREFIX")
+    cfg.mouse = bool(ns.get("MOUSE", True))
     return cfg
 
 

@@ -20,7 +20,7 @@ import pyte
 from wcwidth import wcswidth
 
 from . import config as cfgmod
-from . import proto
+from . import mouse, proto
 from .layout import Layout, Pane, Split
 from .screen import Screen
 
@@ -36,11 +36,11 @@ TAIL = 32 * 1024
 HIDDEN_CAP = 128 * 1024
 
 # Private modes the outer terminal must mirror, because it produces the input
-# (cursor-key mode, bracketed paste, mouse reporting). pyte stores private
-# mode N as N << 5. Mouse modes only while the focused pane sits at the origin
-# (coordinates are not translated yet).
+# (cursor-key mode, bracketed paste). pyte stores private mode N as N << 5.
+# The mouse is not mirrored: the brain asks for SGR reports itself and routes
+# each one to the pane under the pointer (see mouse.py and Brain.on_mouse).
 SYNC_MODES = (1, 2004)
-MOUSE_MODES = (1000, 1002, 1003, 1006)
+WHEEL_LINES = 3                  # arrow keys per wheel notch for a full-screen app without mouse
 COLORS = {"black": 0, "red": 1, "green": 2, "brown": 3, "blue": 4,
           "magenta": 5, "cyan": 6, "white": 7}
 WIDGET_COLORS = (33, 36, 32, 37)
@@ -72,6 +72,13 @@ NO_PREFIX = [
     ("Alt-0 .. Alt-9", "select a window"),
     ("Alt-Tab / Alt-Shift-Tab", "next / previous window (if the desktop lets them through)"),
     ("F2", "window list"),
+]
+MOUSE_HELP = [
+    ("click", "focus a pane (the app gets the click too, if it wants the mouse)"),
+    ("click the status line", "select that window"),
+    ("drag a border", "resize: a │ separator or a caption line"),
+    ("wheel", "the pane under the pointer; arrow keys for vim, less..."),
+    ("Shift+drag", "select text in your terminal (most terminals)"),
 ]
 
 
@@ -181,6 +188,8 @@ class Client:
     mode: str | None = None       # None | "list" | "rename" | "resize"
     list_idx: int = 0
     buf: str = ""
+    grab: Pane | None = None      # the pane that got a press: its drag and release follow
+    drag: tuple[Split, int] | None = None   # a border being dragged
 
 
 class Brain:
@@ -485,6 +494,16 @@ class Brain:
         if c and c.mode == "resize":
             return row + "\x1b[0;30;46m" + fit(" resize: h/l width, j/k height, = equal, "
                                                "other key ends", self.cols) + "\x1b[0m"
+        right_parts, right_w = self.status_right()
+        left, left_w = "\x1b[0;30;46m pys \x1b[0m", 5
+        used = 0
+        for wid, label, x in self.status_tabs(right_w):
+            left += (f"\x1b[0;30;43m{label}\x1b[0m" if wid == self.current else label)
+            used = x + width(label) - left_w
+        gap = " " * max(0, self.cols - left_w - used - right_w)
+        return row + left + gap + "".join(right_parts) + "\x1b[0m"
+
+    def status_right(self) -> tuple[list[str], int]:
         right_parts, right_w = [], 0
         texts = [wd.text for wd in self.cfg.widgets if wd.text]
         if self.cfg.error:
@@ -493,20 +512,20 @@ class Brain:
             seg = f" {t} "
             right_parts.append(f"\x1b[0;{WIDGET_COLORS[i % len(WIDGET_COLORS)]};40m{seg}")
             right_w += width(seg)
-        left = "\x1b[0;30;46m pys \x1b[0m"
-        left_w, budget = 5, max(0, self.cols - 5 - right_w)
-        used = 0
+        return right_parts, right_w
+
+    def status_tabs(self, right_w: int) -> list[tuple[int, str, int]]:
+        """The window labels that fit in the status line: (wid, label, start column)."""
+        x, budget, out = 5, max(0, self.cols - 5 - right_w), []
         for wid in self.order:
             w = self.wins[wid]
             flag = "*" if wid == self.current else ("-" if wid == self.last else "")
             label = f" {wid}{flag} {w.name} "
-            lw = width(label)
-            if used + lw > budget:
+            if x - 5 + width(label) > budget:
                 break
-            left += (f"\x1b[0;30;43m{label}\x1b[0m" if wid == self.current else label)
-            used += lw
-        gap = " " * max(0, self.cols - left_w - used - right_w)
-        return row + left + gap + "".join(right_parts) + "\x1b[0m"
+            out.append((wid, label, x))
+            x += width(label)
+        return out
 
     def window_list(self, c: Client) -> str:
         area = self.rows - 1
@@ -531,6 +550,9 @@ class Brain:
             rows += [f"   {k:<22} {t}: {' '.join(a)}" for k, (t, a) in self.cfg.bind.items()]
         rows += ["", " without the prefix", ""]
         rows += [f"   {k:<22} {v}" for k, v in NO_PREFIX]
+        if self.cfg.mouse:
+            rows += ["", " mouse", ""]
+            rows += [f"   {k:<22} {v}" for k, v in MOUSE_HELP]
         rows += ["", " any key closes this"]
         area = self.rows - 1
         out = []
@@ -563,10 +585,12 @@ class Brain:
         f = self.layout.focus
         want: set[int] = set()
         tail = ""
+        lvl = max(mouse.level(fw.screen.mode) if fw else 0, 1002 if self.cfg.mouse else 0)
+        mouse_want = {lvl, mouse.SGR} if lvl else set()
+        overlay_mouse = {1000, mouse.SGR} if self.cfg.mouse else set()
         if fw:
             s = fw.screen
-            modes = SYNC_MODES + (MOUSE_MODES if (f.x, f.y) == (0, 0) else ())
-            want = {m for m in modes if (m << 5) in s.mode}
+            want = {m for m in SYNC_MODES if (m << 5) in s.mode}
             cx, cy = min(s.cursor.x, s.columns - 1), min(s.cursor.y, f.text_h - 1)
             tail = f"\x1b[{f.y + cy + 1};{f.x + cx + 1}H" + ("" if s.cursor.hidden else "\x1b[?25h")
         for c in self.clients:
@@ -589,7 +613,7 @@ class Brain:
                 body += self.help_screen(c)
             overlay = c.mode in ("list", "help")
             cur = "" if overlay else tail
-            mw = set() if overlay else want
+            mw = overlay_mouse if overlay else want | mouse_want
             modes_s = "".join(f"\x1b[?{m}h" for m in mw - c.modes)
             modes_s += "".join(f"\x1b[?{m}l" for m in c.modes - mw)
             c.modes = mw
@@ -682,6 +706,107 @@ class Brain:
             self.to_keeper(proto.pack(proto.DATA, self.current, data))
 
     async def keys(self, c: Client, data: bytes) -> None:
+        if mouse.has_report(data):
+            for part in mouse.split(data):
+                if isinstance(part, bytes):
+                    await self.key_bytes(c, part)
+                else:
+                    self.on_mouse(c, part)
+            return
+        await self.key_bytes(c, data)
+
+    # ---- mouse --------------------------------------------------------------
+    def to_pane(self, p: Pane, ev: mouse.Event) -> bool:
+        """Give ev to p's app in p's coordinates, if the app takes that kind of event."""
+        w = self.wins.get(p.wid) if p.wid is not None else None
+        if not w or not mouse.accepts(mouse.level(w.screen.mode), ev):
+            return False
+        x = min(max(ev.x - p.x, 0), p.w - 1)
+        y = min(max(ev.y - p.y, 0), p.text_h - 1)
+        sgr = (mouse.SGR << 5) in w.screen.mode
+        self.to_keeper(proto.pack(proto.DATA, w.wid, mouse.encode(ev, x, y, sgr)))
+        return True
+
+    def focus_pane(self, p: Pane) -> None:
+        if p is self.layout.focus:
+            return
+        if p.wid is not None:
+            self.select(p.wid)                    # also keeps "last" right
+        else:
+            self.layout.focus = p
+            self.relayout()
+
+    def wheel_keys(self, p: Pane, ev: mouse.Event) -> None:
+        """A full-screen app that doesn't take the mouse (less, man, vim without
+        mouse=a) scrolls with arrow keys, as terminals do for the alternate screen."""
+        w = self.wins.get(p.wid) if p.wid is not None else None
+        if not w or not w.screen.in_alt or ev.button > 1:
+            return
+        app_keys = (1 << 5) in w.screen.mode       # DECCKM: the app wants ESC O A
+        key = (b"\x1bO" if app_keys else b"\x1b[") + (b"A" if ev.button == 0 else b"B")
+        self.to_keeper(proto.pack(proto.DATA, w.wid, key * WHEEL_LINES))
+
+    def on_mouse(self, c: Client, ev: mouse.Event) -> None:
+        if c.mode == "help":
+            if ev.press:
+                c.mode, c.stale = None, True
+                self.schedule_render()
+            return
+        if c.mode == "list":
+            if ev.wheel:
+                d = -1 if ev.button == 0 else 1
+                c.list_idx = min(max(0, c.list_idx + d), len(self.order) - 1)
+            elif ev.press and 1 <= ev.y <= len(self.order):
+                c.mode = None
+                self.select(self.order[ev.y - 1])
+            c.stale = True
+            self.schedule_render()
+            return
+        if c.mode:                                # rename / resize: keys only
+            return
+        if c.drag:                                # a border follows the pointer
+            split, i = c.drag
+            if ev.release:
+                c.drag = None
+                self.save_state()
+            elif ev.motion:
+                self.layout.drag(split, i, ev.x if split.vertical else ev.y)
+                self.relayout()
+            return
+        if c.grab:                                # drag and release go where the press went
+            if ev.release or (ev.motion and ev.button != 3):
+                self.to_pane(c.grab, ev)
+                if ev.release:
+                    c.grab = None
+                return
+            c.grab = None
+        p = self.layout.pane_at(ev.x, ev.y) if ev.y < self.rows - 1 else None
+        in_text = p is not None and ev.y < p.y + p.text_h
+        if ev.wheel:
+            if in_text and not self.to_pane(p, ev):
+                self.wheel_keys(p, ev)
+            return
+        if ev.motion:                             # no button held: focused app only
+            if in_text and p is self.layout.focus:
+                self.to_pane(p, ev)
+            return
+        if not ev.press:
+            return
+        if ev.y == self.rows - 1:                 # the status line: pick a window
+            for wid, label, x in self.status_tabs(self.status_right()[1]):
+                if x <= ev.x < x + width(label):
+                    self.select(wid)
+            return
+        if p is not None:
+            self.focus_pane(p)
+            if in_text:
+                if self.to_pane(p, ev):
+                    c.grab = p
+                return
+        if ev.button == 0 and (b := self.layout.boundary_at(ev.x, ev.y)):
+            c.drag = b
+
+    async def key_bytes(self, c: Client, data: bytes) -> None:
         if c.mode:
             await self.mode_keys(c, data)
             return

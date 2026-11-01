@@ -76,6 +76,24 @@ themselves (GNOME: `org.gnome.desktop.wm.keybindings switch-applications`), so i
 py-screen only where the desktop lets it through, e.g. over ssh from another machine.
 Inside GNU screen, screen's own `bindkey` lines may also take the Alt keys first.
 
+### Mouse
+
+On by default, like tmux's `mouse on`:
+
+| Mouse | Does |
+|-------|------|
+| click a pane | focus it; its app gets the click too if it asked for the mouse |
+| click a window in the status line | select it |
+| drag a `│` separator or a caption line | resize the panes on both sides |
+| wheel | goes to the pane under the pointer, focused or not; a full-screen app that didn't ask for the mouse (less, man) gets arrow keys |
+| Shift+drag | select text in your terminal (most terminals; the mouse is pys's otherwise) |
+
+Every report is routed to the pane under the pointer and rewritten in that pane's
+coordinates, in the encoding the app asked for (SGR 1006, or the old X10 form). A press
+grabs its pane: the drag and the release go there even if the pointer leaves it.
+`MOUSE = False` in the config gives plain drags back to the terminal; the mouse is then
+pys's only while the focused app asks for it (still translated per pane).
+
 ### Config
 
 `~/.config/pys/config.py` (plain Python, read on every brain start, so `C-a R` applies an
@@ -84,6 +102,7 @@ edit): status widgets and extra key bindings. See `src/py_screen/config.py` for 
 ```python
 WIDGETS = [cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10), load(), clock()]
 BIND = {"T": ("top", ["htop"])}   # C-a T opens a window running htop
+MOUSE = True                      # False: plain drags select text in the terminal
 ```
 
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
@@ -102,8 +121,8 @@ Results of each run are kept in [`bench/results/`](bench/results/), one file per
 
 ## Known gaps (M1)
 
-- Mouse reporting is passed through only while the focused pane is the top-left one
-  (coordinates aren't translated yet).
+- A mouse report split across two reads is passed on as keys (rare; the outer terminal
+  writes each report at once).
 - A hidden window's title in the status line updates only when the window is shown
   (its output isn't parsed until then).
 - No scrollback view yet (M2).
