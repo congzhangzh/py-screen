@@ -29,8 +29,16 @@ Changes on top of upstream, each its own commit (`git log -- deps/libvterm`):
    (`screen.c` putglyph, a segfault; found on seed 46). Now a character is repeated
    only while it fits. Not reported upstream yet.
 
+3. `src/state.c`, `on_resize`: only the bottom and right margins were clamped to the new
+   size, so a scroll region that no longer fit (`ESC [ 6 ; 10 r`, then 3 rows) ended
+   upside down, and the next line feed's `scroll()` did a `memmove` of negative size
+   (found by AddressSanitizer on tests/test_vterm.py seed 10040; before it, a heap
+   corruption). Such a region now goes back to the whole screen, as xterm resets
+   margins on a resize. Not reported upstream yet.
+
 Nothing else in libvterm is changed; py-screen's own C code reaches libvterm through its
-headers only.
+headers and, for its own resize, the line-info arrays and allocator libvterm's state
+expects a resize callback to replace (as `screen.c` does).
 
 To update, keep it flat the same way: fetch the new tag, `git rm -rq deps/libvterm`,
 `git read-tree --prefix=deps/libvterm -u <tag>^{tree}`, commit with the two trailers

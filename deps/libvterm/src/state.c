@@ -1988,6 +1988,18 @@ static int on_resize(int rows, int cols, void *user)
   if(state->scrollregion_right > -1)
     UBOUND(state->scrollregion_right, state->cols);
 
+  // py-screen: only the bottom and right margins were clamped, so a region that no
+  // longer fits ended upside down (top >= bottom) and the next scroll() did a
+  // memmove of negative size. Such a region goes back to the whole screen.
+  if(state->scrollregion_top >= SCROLLREGION_BOTTOM(state)) {
+    state->scrollregion_top = 0;
+    state->scrollregion_bottom = -1;
+  }
+  if(state->scrollregion_left >= SCROLLREGION_RIGHT(state)) {
+    state->scrollregion_left = 0;
+    state->scrollregion_right = -1;
+  }
+
   VTermStateFields fields = {
     .pos       = state->pos,
     .lineinfos = { [0] = state->lineinfos[0], [1] = state->lineinfos[1] },
