@@ -7,19 +7,19 @@ name: release
 # nothing published, or a release of a main commit:
 #   gh workflow run release.yml -R congzhangzh/py-screen [--ref <branch>] -f ref=<sha> [-f publish=true]
 #
-#   test × OS     the suite on each OS, on both screen engines (vterm, pyte)
+#   test × OS     the suite on each OS, on both screen engines (vterm, pyte); on Windows
+#                 the RPC smoke test (the suite's pty harness is POSIX-only)
 #   sanitize      the _vterm extension built with ASan + UBSan, a differential fuzz run
 #   bench         vterm's lead over pyte, on this runner, against the newest recorded run
 #   sdist         the sdist, version <YYYYMMDD>.<N>
 #   wheels × OS   cibuildwheel builds each OS's wheel *from that sdist*, so the sdist is
 #                 proven complete (libvterm and the licences included)
-#   smoke × OS    `uv tool install` of that OS's wheel, then release/smoke.sh with
+#   smoke × OS    `uv tool install` of that OS's wheel, then release/smoke.py with
 #                 PYS_TERM=vterm, which fails when a wheel lacks the extension
 #   draft         a GitHub draft release with every file (a draft creates no tag)
 #   pypi          the wheels and the sdist to PyPI (Trusted Publishing, environment pypi)
 #   release       the draft published, which creates the tag
 # so a failure before PyPI leaves only a draft, and one after it is finished by a rerun.
-# Windows joins once the platform layer (src/py_screen/platform/) has landed.
 on:
   push:
     branches: [main]
@@ -53,9 +53,12 @@ jobs:
     strategy:
       fail-fast: true # the first failure stops the round
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,9 +66,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv python install 3.14
       - name: The suite on vterm (the default)
-        run: uv run pytest -q
+        run: uv run pytest -q $TESTS
+        env:
+          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
       - name: The suite on pyte
-        run: PYS_TERM=pyte uv run pytest -q
+        run: PYS_TERM=pyte uv run pytest -q $TESTS
+        env:
+          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
 
   sanitize:
     runs-on: ubuntu-latest
@@ -149,8 +156,12 @@ jobs:
           - { os: ubuntu-24.04-arm, arch: aarch64 }
           - { os: macos-15, arch: arm64 }
           - { os: macos-15-intel, arch: x86_64 }
+          - { os: windows-latest, arch: AMD64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -164,8 +175,14 @@ jobs:
       - name: The wheel has the engine and both licences
         run: |
           ls -l wheelhouse
-          unzip -l wheelhouse/*.whl | grep -E '_vterm\..*(so|pyd)$'
-          unzip -l wheelhouse/*.whl | grep -c 'licenses/.*LICENSE' | grep -qx 2
+          uv run --no-project --python 3.14 python - wheelhouse/*.whl <<'PY'
+          import re, sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          ext = [n for n in names if re.search(r"_vterm\..*(so|pyd)$", n)]
+          lic = [n for n in names if re.search(r"licenses/.*LICENSE$", n)]
+          print("engine:", ext, "licences:", lic)
+          sys.exit(0 if ext and len(lic) == 2 else "the wheel lacks the engine or a licence")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.arch }}
@@ -176,9 +193,12 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -198,7 +218,7 @@ jobs:
           uv tool install --python 3.14 --find-links dist "py-screen-mux==$VERSION"
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: Smoke test on the vterm engine
-        run: PYS_TERM=vterm release/smoke.sh
+        run: PYS_TERM=vterm uv run --no-project --python 3.14 python release/smoke.py
 
 
   draft:
@@ -238,7 +258,7 @@ jobs:
           {
             echo "py-screen \`$VERSION\` from \`main\` @ [\`${SHA:0:12}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$SHA)."
             echo
-            echo "**Tested:** the suite on Linux and macOS on both engines (vterm, pyte); the vterm engine under ASan + UBSan (a differential fuzz run); its parse speed against the newest recorded run; then each wheel, installed, on the vterm engine (\`release/smoke.sh\`)."
+            echo "**Tested:** the suite on Linux and macOS, and the RPC smoke test on Windows, on both engines (vterm, pyte); the vterm engine under ASan + UBSan (a differential fuzz run); its parse speed against the newest recorded run; then each wheel, installed, on the vterm engine (\`release/smoke.py\`)."
             echo
             echo "**Install** (needs [uv](https://docs.astral.sh/uv/); it fetches Python 3.14 if missing; the command is \`pys\`):"
             echo '```'
@@ -254,6 +274,7 @@ jobs:
                 *manylinux*aarch64*) os="Linux aarch64" ;;
                 *macosx*arm64*) os="macOS Apple Silicon" ;;
                 *macosx*x86_64*) os="macOS Intel" ;;
+                *win_amd64*) os="Windows x86_64" ;;
                 *) os=$whl ;;
               esac
               echo "| $os | \`uv tool install $base/$whl\` |"

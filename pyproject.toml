@@ -16,6 +16,7 @@ classifiers = [
     "Environment :: Console",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: C",
     "Topic :: Terminals :: Terminal Emulators/X Terminals",

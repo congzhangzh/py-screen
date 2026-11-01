@@ -66,13 +66,15 @@ version and the tag alike, on [PyPI as `py-screen-mux`](https://pypi.org/project
 and as a [GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never
 replaced. Pushes that change only docs, specs or bench results publish nothing. A release must pass, in [`release.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/release.yml):
 
-- the suite on Linux and macOS, on both screen engines (vterm and pyte);
+- the suite on Linux and macOS, and the RPC smoke test on Windows, on both screen engines
+  (vterm and pyte);
 - the vterm engine built with ASan + UBSan and fuzzed against libvterm's own screen
   (a long run every night, in [`sanitize.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/sanitize.yml));
 - a parse-speed check: vterm's lead over pyte must keep at least half of the newest
   recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
 - each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
-  engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64.
+  engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64,
+  Windows x86_64.
 
 Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed and picks
 the wheel for your system:
@@ -85,7 +87,6 @@ The package is `py-screen-mux` on PyPI because `py-screen` is too close to an ex
 `pyscreen` there; the import is `py_screen` and the command `pys`.
 
 Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one.
-Windows joins once its platform layer lands.
 
 ## Use
 
