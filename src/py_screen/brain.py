@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 
 import pyte
@@ -1150,9 +1151,28 @@ class Brain:
         self.exit_code = code
         self.done.set()
 
+    def crash(self, what: str, exc: BaseException) -> None:
+        """A core task or callback failed: its work is half done (bytes taken off a
+        window's queue and not parsed, a frame half sent). Carrying on would leave a
+        brain that looks alive and does nothing, so log it and exit; the keeper starts
+        a new brain, which gets every window back from the keeper's replay."""
+        log(what, "failed:\n" + "".join(traceback.format_exception(exc)).rstrip())
+        self.quit(1)
+
+    def on_loop_error(self, loop: asyncio.AbstractEventLoop, ctx: dict) -> None:
+        exc = ctx.get("exception")
+        if exc is not None and "handle" in ctx:   # a callback: parse_step, render
+            self.crash(f"callback {ctx['handle']}", exc)
+        else:
+            loop.default_exception_handler(ctx)
+
     async def main(self) -> int:
         loop = asyncio.get_running_loop()
+        loop.set_exception_handler(self.on_loop_error)
         keeper_task = loop.create_task(self.keeper_loop())
+        keeper_task.add_done_callback(
+            lambda t: t.cancelled() or t.exception() is None
+            or self.crash("keeper loop", t.exception()))  # type: ignore[arg-type]
         path = proto.brain_sock()
         path.unlink(missing_ok=True)
         server = await asyncio.start_unix_server(self.on_conn, str(path), limit=1 << 20)
