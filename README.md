@@ -31,7 +31,8 @@ alternate screen or bracketed paste, breaks input too). Until 2026-11-01 py-scre
 only the tail of a flood and dropped a hidden window's output past 128 KB; that is what
 left stray characters in Claude's status line.
 
-Parsing (pyte, about 0.75 MB/s of scrolling text) is the slow part, so:
+Parsing is the slow part (pyte in Python; py-screen's fast paths for plain text, line
+feeds and CSI sequences take it from 0.85 to 1.7 MB/s of scrolling text), so:
 
 - **Backpressure, not dropping.** The keeper gives each window a **credit** of 256 KB
   un-acked output and stops reading that pty past it. The brain acks bytes only once it
@@ -42,8 +43,12 @@ Parsing (pyte, about 0.75 MB/s of scrolling text) is the slow part, so:
 - **Keys first.** For 100 ms after a key, only shown windows are parsed: nothing else
   stands between a key and its echo (about 2 ms median while a hidden window floods).
 
-Trade-off: a flood runs at the parser's speed, slower than GNU screen's C parser (numbers
-in [`bench/results/`](bench/results/)). A faster parser is the next step (spec §8.1).
+Trade-off: a flood runs at the parser's speed, about 2× GNU screen's time (`seq 1 5000000`
+25 s vs 13 s; numbers in [`bench/results/`](bench/results/)). A native parser is the way
+past that (spec §8.1).
+
+A sequence that pyte can't apply (an extra parameter, a `?` where none is defined, an
+unknown erase value) is ignored, as terminals do; the bytes after it are still parsed.
 
 ## Use
 

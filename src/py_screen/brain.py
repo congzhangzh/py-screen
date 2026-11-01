@@ -23,7 +23,7 @@ from wcwidth import wcswidth
 from . import config as cfgmod
 from . import mouse, proto
 from .layout import Layout, Pane, Split
-from .screen import Screen
+from .screen import Screen, Stream
 
 FRAME = 1 / 60                   # render at most 60 times a second
 CLIENT_HIGH_WATER = 1 << 20      # a client this far behind skips frames, then gets a full redraw
@@ -150,7 +150,7 @@ class Window:
     pid: int
     cmd: list[str]
     screen: Screen
-    stream: pyte.ByteStream
+    stream: Stream
     title: str | None = None     # set by C-a , or a BIND entry; wins over the app's title
     pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
     noack: int = 0               # bytes at the front of pending that the keeper replayed:
@@ -159,7 +159,7 @@ class Window:
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int) -> "Window":
         screen = Screen(cols, rows)
-        return cls(wid, pid, cmd, screen, pyte.ByteStream(screen))
+        return cls(wid, pid, cmd, screen, Stream(screen))
 
     @property
     def name(self) -> str:

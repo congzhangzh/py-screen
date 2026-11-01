@@ -226,6 +226,12 @@ and a dropped mode switch breaks input. If it's too slow:
 3. Render at most 60 frames per second.
 4. **A faster parser** is the only way to faster floods: pyte's hot loop in Rust (pyo3) or
    Cython, or a native emulator behind the same `Screen` interface.
+   - *Step 1 (2026-11-01):* pure-Python fast paths in the hot spots (draw, the stream's
+     ground state, scrolling), proven equal to pyte by a differential fuzz test. Floods
+     went from 4–6× to about 2× screen's time; Python's cost per line is what is left
+     (`bench/results/m1-fastparse-*`).
+   - *Step 2 (open):* native. It removes the per-line cost but adds a compiled
+     dependency to every platform's install; the owner decides.
 
 (v2 had "parse only the tail of a flood" as remedy 1. It made floods 3–4× faster than
 screen and was replaced in v3 for the reason above; the bench results of both are kept in
