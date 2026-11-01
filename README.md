@@ -143,7 +143,7 @@ uv run pytest -s                                      # M0 done-criteria (spec ย
 uv run python bench/m0_speed.py --work <scratch dir>  # speed vs GNU screen (spec ยง8.1)
 ```
 
-Results of each run are kept in [`bench/results/`](bench/results/), one file per run.
+Results of each run are kept in [`bench/results/`](bench/results/), one file per run, and [`bench/README.md`](bench/README.md) tells how the speed evolved, one row per run.
 
 ## Known gaps (M1)
 
