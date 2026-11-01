@@ -1,0 +1,29 @@
+[project]
+name = "py-screen"
+version = "0.1.0"
+description = "A terminal workspace of my own"
+readme = "README.md"
+authors = [
+    { name = "Cong Zhang", email = "13283869+congzhangzh@users.noreply.github.com" }
+]
+license = "MIT"
+requires-python = ">=3.14"
+dependencies = [
+    "pyte>=0.8.2",
+]
+
+[project.scripts]
+pys = "py_screen:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["tests"]
+testpaths = ["tests"]
