@@ -1,0 +1,140 @@
+name: release
+
+# Picks a commit of main as a release, by hand, once 聪哥 says it is ripe:
+#   gh workflow run release.yml -R congzhangzh/py-screen -f ref=<sha> -f publish=true
+# Without publish (the default) it is a dry run: test, build and smoke, nothing published.
+#
+# 1. test × OS   the test suite on each OS, from that commit
+# 2. build       one pure wheel (py3-none-any) and the sdist, version 0.1.0.dev<YYYYMMDD><NNN>
+# 3. smoke × OS  `uv tool install` of that wheel, then release/smoke.sh against it
+# 4. publish     a draft with every file, then the release <YYYYMMDD>.<N>, which creates the
+#                tag; published once, never replaced
+# Windows joins the OS list once the platform layer (src/py_screen/platform/) has landed.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The commit of main to pick (empty = main's tip)
+        default: ''
+      publish:
+        description: Publish the release (off = a dry run)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  # one release at a time, so each counts <N> from the releases before it
+  group: release
+
+jobs:
+  test:
+    strategy:
+      fail-fast: true # the first failure stops the round
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - run: uv run pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - id: v
+        name: Name the release
+        run: |
+          sha=$(git rev-parse HEAD)
+          # a release is a commit of main, never of another branch
+          git merge-base --is-ancestor "$sha" origin/main ||
+            { echo "::error::${sha:0:12} is not on main"; exit 1; }
+          day=$(date -u +%Y%m%d)
+          n=$(( $(git ls-remote --tags origin "refs/tags/$day.*" | wc -l) + 1 ))
+          base=$(uv version --short)
+          version=${base%%.dev*}.dev$day$(printf %03d "$n")
+          echo "release $day.$n: py-screen $version from ${sha:0:12}"
+          { echo "tag=$day.$n"; echo "version=$version"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+      - name: Build the wheel and the sdist
+        run: |
+          uv version --frozen "${{ steps.v.outputs.version }}"
+          uv build
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          sparse-checkout: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: astral-sh/setup-uv@v6
+      - name: Install the wheel, not the checkout
+        run: |
+          uv tool install --python 3.14 dist/*.whl
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+      - run: release/smoke.sh
+
+  publish:
+    needs: [build, smoke]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Publish (a draft first, so a failure leaves nothing public)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          whl=$(cd dist && ls *.whl)
+          url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$whl
+          # shellcheck disable=SC2016 # the backticks are Markdown
+          {
+            echo "py-screen \`$VERSION\` from \`main\` @ [\`${SHA:0:12}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$SHA)."
+            echo
+            echo "**Tested** on Linux and macOS: the test suite, then the installed wheel (\`release/smoke.sh\`)."
+            echo
+            echo "**Install** (needs [uv](https://docs.astral.sh/uv/); it fetches Python 3.14 if missing):"
+            echo '```'
+            echo "uv tool install $url"
+            echo '```'
+            echo
+            echo "Published once, never replaced."
+          } > notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$SHA" \
+            --title "py-screen $VERSION ($TAG)" --notes-file notes.md dist/*
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
