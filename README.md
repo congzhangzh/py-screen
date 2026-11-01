@@ -4,7 +4,7 @@ A terminal workspace of my own, in Python: not a clone of screen or tmux, built 
 made more powerful and improved by daily use. The design is in [`spec/`](https://github.com/congzhangzh/py-screen/tree/main/spec/); the
 current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
 
-Status: **M1 in progress** (Linux; Windows pieces checked on CI). One server, many windows, attach/detach, hot reload, flood-safe typing.
+Status: **M1 in progress** (Linux; macOS and Windows on the platform layer, tested on CI). One server, many windows, attach/detach, hot reload, flood-safe typing.
 
 ## How it works
 
@@ -168,6 +168,24 @@ uv run python bench/m0_speed.py --work <scratch dir>  # speed vs GNU screen (spe
 
 Results of each run are kept in [`bench/results/`](https://github.com/congzhangzh/py-screen/tree/main/bench/results/), one file per run, and [`bench/README.md`](https://github.com/congzhangzh/py-screen/blob/main/bench/README.md) tells how the speed evolved, one row per run.
 
+## Platforms
+
+Everything that differs between systems lives in
+[`src/py_screen/platform/`](src/py_screen/platform/) (spec §5.2); the keeper, brain and
+client import nothing else that is OS-specific.
+
+| | Linux / macOS | Windows |
+|--|--|--|
+| ptys | `pty.fork` | ConPTY via [pywinpty](https://github.com/andfoy/pywinpty) |
+| keeper ↔ brain ↔ client | Unix sockets (0600) in `$XDG_RUNTIME_DIR/pys/` | named pipes `\\.\pipe\pys-<user>-<dir hash>-*` |
+| background server | `setsid` | hidden console (`CREATE_NO_WINDOW`) |
+| attached terminal | raw tty, SIGWINCH | console VT mode, size polled every 250 ms |
+| default shell | `$SHELL` | `%PYS_SHELL%`, else `%COMSPEC%` |
+
+CI: Linux runs the full suite on every push; macOS (full suite) and Windows
+(`tests/test_rpc_smoke.py`, plus `spike/win_check.py`) run when the platform layer
+changes, or by hand (`platform` workflow).
+
 ## Known gaps (M1)
 
 - A mouse report split across two reads is passed on as keys (rare; the outer terminal
@@ -177,4 +195,10 @@ Results of each run are kept in [`bench/results/`](https://github.com/congzhangz
   Keeping the screens across a planned reload is open.
 - Floods are bounded by pyte's speed (see "Floods").
 - No scrollback view yet (M2).
-- Linux (and macOS) only for now; the Windows pieces are checked by the manual CI run.
+- Windows: `pys attach` needs a real console (Windows Terminal or conhost, not mintty);
+  a new window doesn't inherit the focused window's directory (it isn't read from the
+  child yet), and the load widget is empty. The pty harness tests are POSIX-only, so
+  Windows CI runs the RPC smoke test.
+- Windows named pipes keep the default DACL (other local users may open them); instead
+  every connection must first send a per-session key from the user-private runtime dir.
+  A per-user DACL would close the pipe itself; still to do.

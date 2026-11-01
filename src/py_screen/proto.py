@@ -13,6 +13,8 @@ import os
 import struct
 from pathlib import Path
 
+from . import platform
+
 HEADER = struct.Struct("!IBI")
 DATA = 1
 CTL = 2
@@ -22,16 +24,14 @@ RELOAD_EXIT = 75  # brain exit code that asks the keeper to start it again at on
 
 
 def runtime_dir() -> Path:
-    """Where sockets and logs live. PYS_DIR overrides (dev builds, tests)."""
+    """Where sockets (or the names of named pipes) and logs live. PYS_DIR overrides
+    (dev builds, tests)."""
     if d := os.environ.get("PYS_DIR"):
         p = Path(d)
     else:
-        base = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/pys-{os.getuid()}"
-        p = Path(base) / "pys"
+        p = platform.runtime_base() / "pys"
     p.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # sockaddr_un.sun_path is 108 bytes on Linux (104 on macOS), NUL included.
-    if len(str(p / "keeper.sock").encode()) > 103:
-        raise SystemExit(f"pys: socket dir too long for AF_UNIX (108-byte sun_path): {p}")
+    platform.check_path(p)
     return p
 
 
@@ -63,8 +63,7 @@ async def read_frame(reader: asyncio.StreamReader) -> tuple[int, int, bytes | di
 
 async def rpc(msg: dict, timeout: float = 5.0) -> dict:
     """One-shot request to the brain: send a CTL, return its CTL reply."""
-    reader, writer = await asyncio.wait_for(
-        asyncio.open_unix_connection(str(brain_sock())), timeout)
+    reader, writer = await asyncio.wait_for(platform.connect(brain_sock()), timeout)
     try:
         writer.write(pack_ctl({"op": "rpc", **msg}))
         await writer.drain()

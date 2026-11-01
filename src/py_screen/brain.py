@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from wcwidth import wcswidth
 
 from . import config as cfgmod
-from . import mouse, proto, term
+from . import mouse, platform, proto, term
 from .layout import Layout, Pane, Split
 
 FRAME = 1 / 60                   # render at most 60 times a second
@@ -127,10 +127,7 @@ class Window:
         return self.title or self.term.title or os.path.basename(self.cmd[0])
 
     def cwd(self) -> str | None:
-        try:
-            return os.readlink(f"/proc/{self.pid}/cwd")
-        except OSError:
-            return None
+        return platform.proc_cwd(self.pid)
 
     def parse(self, n: int) -> int:
         """Parse up to n pending bytes (the term keeps its parser state between pieces,
@@ -201,8 +198,7 @@ class Brain:
             self.keeper_w.write(frame)
 
     async def keeper_loop(self) -> None:
-        r, self.keeper_w = await asyncio.open_unix_connection(
-            str(proto.keeper_sock()), limit=1 << 22)
+        r, self.keeper_w = await platform.connect(proto.keeper_sock(), limit=1 << 22)
         try:
             while True:
                 kind, wid, body = await proto.read_frame(r)
@@ -243,6 +239,10 @@ class Brain:
             fut = self.pending.pop(m.get("tag") or "", None)
             if fut and not fut.done():
                 fut.set_result(w)
+        elif op == "spawn_failed":
+            fut = self.pending.pop(m.get("tag") or "", None)
+            if fut and not fut.done():
+                fut.set_exception(OSError(m.get("error")))
         elif op == "exited":
             self.remove_window(m["wid"])
 
@@ -353,7 +353,7 @@ class Brain:
         tag = f"t{self.tag_n}"
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self.pending[tag] = fut
-        cmd = cmd or [os.environ.get("SHELL", "/bin/sh")]
+        cmd = cmd or [platform.default_shell()]
         f = self.layout.focus
         cols, rows = size or ((f.w, f.text_h) if f.w else (self.cols, self.rows - 2))
         self.to_keeper(proto.pack_ctl({"op": "spawn", "cmd": cmd, "cwd": cwd, "tag": tag,
@@ -1125,10 +1125,7 @@ class Brain:
         keeper_task.add_done_callback(
             lambda t: t.cancelled() or t.exception() is None
             or self.crash("keeper loop", t.exception()))  # type: ignore[arg-type]
-        path = proto.brain_sock()
-        path.unlink(missing_ok=True)
-        server = await asyncio.start_unix_server(self.on_conn, str(path), limit=1 << 20)
-        os.chmod(path, 0o600)
+        server = await platform.serve(proto.brain_sock(), self.on_conn, limit=1 << 20)
         widget_tasks = [loop.create_task(self.widget_loop(wd)) for wd in self.cfg.widgets]
         log("up, pid", os.getpid())
         await self.done.wait()

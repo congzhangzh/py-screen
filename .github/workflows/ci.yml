@@ -1,34 +1,15 @@
 name: ci
+# Every push: the full suite on Linux. macOS and Windows live in platform.yml.
 on:
   push:
   pull_request:
   workflow_dispatch:
-    inputs:
-      all:
-        description: "Also run macOS tests and the Windows spike"
-        type: boolean
-        default: true
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv python install 3.14
       - run: uv run pytest -q
-  macos:
-    if: github.event_name == 'workflow_dispatch' && inputs.all
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv python install 3.14
-      - run: uv run pytest -q
-  windows-check:
-    if: github.event_name == 'workflow_dispatch' && inputs.all
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv python install 3.14
-      - run: uv run --no-project --python 3.14 --with pyte --with pywinpty python spike/win_check.py

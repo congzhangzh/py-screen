@@ -1,0 +1,33 @@
+name: platform
+# macOS and Windows: only when the platform layer (or its smoke test) changes, or by hand.
+# Kept off the every-push path on purpose: Linux CI stays fast.
+on:
+  push:
+    paths:
+      - "src/py_screen/platform/**"
+      - "tests/test_rpc_smoke.py"
+      - ".github/workflows/platform.yml"
+  workflow_dispatch:
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - run: uv run pytest -q
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      # The pty harness is POSIX-only; the RPC smoke test runs the whole server.
+      - run: uv run pytest -q -p no:cacheprovider tests/test_rpc_smoke.py
+      - name: server log on failure
+        if: failure()
+        shell: bash
+        run: find "$LOCALAPPDATA" "$RUNNER_TEMP" -name server.log -path '*pys*' -exec sh -c 'echo "== $1"; cat "$1"' _ {} \; 2>/dev/null || true
+      - run: uv run --no-project --python 3.14 --with pyte --with pywinpty python spike/win_check.py

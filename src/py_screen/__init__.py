@@ -6,23 +6,11 @@ import argparse
 import asyncio
 import json
 import os
-import socket
-import subprocess
 import sys
 import time
 
-from . import proto
-
-
-def alive(path) -> bool:
-    s = socket.socket(socket.AF_UNIX)
-    try:
-        s.connect(str(path))
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+from . import platform, proto
+from .platform import alive
 
 
 def ensure_server(timeout: float = 5.0) -> None:
@@ -30,10 +18,8 @@ def ensure_server(timeout: float = 5.0) -> None:
     if alive(proto.brain_sock()):
         return
     if not alive(proto.keeper_sock()):
-        logf = open(proto.runtime_dir() / "server.log", "ab")
-        subprocess.Popen([sys.executable, "-m", "py_screen", "_keeper"],
-                         stdin=subprocess.DEVNULL, stdout=logf, stderr=logf,
-                         start_new_session=True, cwd="/")
+        platform.start_detached([sys.executable, "-m", "py_screen", "_keeper"],
+                                proto.runtime_dir() / "server.log")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if alive(proto.brain_sock()):

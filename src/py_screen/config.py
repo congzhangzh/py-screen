@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import platform
+
 _CTRL = re.compile(r"[\x00-\x1f\x7f]|\x1b\[[0-9;?]*[A-Za-z]")
 
 
@@ -69,7 +71,8 @@ class Cmd(Widget):
 @dataclass
 class Load(Widget):
     async def update(self, ctx: dict) -> str:
-        return f"{os.getloadavg()[0]:.2f}"
+        la = platform.loadavg()                   # None on Windows: no load average
+        return "" if la is None else f"{la:.2f}"
 
 
 @dataclass

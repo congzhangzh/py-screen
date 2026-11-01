@@ -4,22 +4,20 @@ It is the only reader of each pty master, so its ring buffer is always complete.
 It forwards output to the brain (when one is connected), writes the brain's
 input to the ptys, and starts the brain again whenever it exits. A brain crash
 or reload therefore never closes a pty, so no shell gets SIGHUP.
+
+Ptys, the brain link and signals come from the platform layer, so this file is the
+same on Linux, macOS and Windows.
 """
 
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import os
-import signal
-import struct
 import sys
-import termios
 import time
-import pty
 from dataclasses import dataclass, field
 
-from . import proto
+from . import platform, proto
 
 RING_CAP = 2 * 1024 * 1024       # bytes of recent output kept per window for replay
 HIGH_WATER = 4 * 1024 * 1024     # safety net: pause every pty while the brain lags this much
@@ -34,7 +32,7 @@ def log(*a: object) -> None:
 class Win:
     wid: int
     pid: int
-    fd: int
+    pty: object                  # platform Pty (posix.PosixPty / windows.WinPty)
     cols: int
     rows: int
     cmd: list[str]
@@ -59,37 +57,23 @@ class Keeper:
         self.next_wid += 1
         env = dict(os.environ, TERM="screen-256color", PYS_WINDOW=str(wid))
         env.pop("PYS_DIR_INTERNAL", None)
-        pid, fd = pty.fork()                       # child: setsid + pty slave as ctty
-        if pid == 0:
-            try:
-                if cwd:
-                    os.chdir(cwd)
-                os.execvpe(cmd[0], cmd, env)
-            finally:
-                os._exit(127)
-        os.set_blocking(fd, False)
-        w = Win(wid, pid, fd, cols, rows, cmd)
-        self.set_size(w, cols, rows)
+        p = platform.spawn_pty(cmd, cwd, env, cols, rows)
+        w = Win(wid, p.pid, p, cols, rows, cmd)
         self.wins[wid] = w
-        if not self.paused:
-            asyncio.get_running_loop().add_reader(fd, self.on_readable, w)
-        log("spawned", wid, pid, cmd)
+        p.start(lambda data: self.on_output(w, data), lambda code: self.reap(w, code))
+        self.update_reading(w)
+        log("spawned", wid, p.pid, cmd)
         return w
+
+    def update_reading(self, w: Win) -> None:
+        """Read a pty unless the brain lags (paused) or the window used its credit."""
+        w.pty.set_reading(not self.paused and not w.blocked)  # type: ignore[attr-defined]
 
     def set_size(self, w: Win, cols: int, rows: int) -> None:
         w.cols, w.rows = cols, rows
-        fcntl.ioctl(w.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        w.pty.resize(cols, rows)  # type: ignore[attr-defined]
 
-    def on_readable(self, w: Win) -> None:
-        try:
-            data = os.read(w.fd, 65536)
-        except BlockingIOError:
-            return
-        except OSError:                            # EIO: the slave side is gone
-            data = b""
-        if not data:
-            self.reap(w)
-            return
+    def on_output(self, w: Win, data: bytes) -> None:
         w.ring += data
         if len(w.ring) > RING_CAP:
             del w.ring[: len(w.ring) - RING_CAP]
@@ -101,8 +85,7 @@ class Keeper:
         w.inflight += len(data)
         if w.inflight > CREDIT and not w.blocked and w.wid in self.wins:
             w.blocked = True
-            if not self.paused:
-                asyncio.get_running_loop().remove_reader(w.fd)
+            self.update_reading(w)
 
     def ack(self, wid: int, n: int) -> None:
         w = self.wins.get(wid)
@@ -111,27 +94,17 @@ class Keeper:
         w.inflight = max(0, w.inflight - n)
         if w.blocked and w.inflight <= CREDIT // 2:
             w.blocked = False
-            if not self.paused:
-                asyncio.get_running_loop().add_reader(w.fd, self.on_readable, w)
+            self.update_reading(w)
 
     def unblock_all(self) -> None:
         for w in self.wins.values():
             w.inflight = 0
             if w.blocked:
                 w.blocked = False
-                if not self.paused:
-                    asyncio.get_running_loop().add_reader(w.fd, self.on_readable, w)
+                self.update_reading(w)
 
-    def reap(self, w: Win) -> None:
-        loop = asyncio.get_running_loop()
-        loop.remove_reader(w.fd)
-        os.close(w.fd)
-        try:
-            _, status = os.waitpid(w.pid, 0)
-            code = os.waitstatus_to_exitcode(status)
-        except ChildProcessError:
-            code = None
-        del self.wins[w.wid]
+    def reap(self, w: Win, code: int | None) -> None:
+        self.wins.pop(w.wid, None)
         log("exited", w.wid, code)
         self.to_brain(proto.pack_ctl({"op": "exited", "wid": w.wid, "code": code}))
 
@@ -147,18 +120,15 @@ class Keeper:
 
     def pause(self) -> None:
         self.paused = True
-        loop = asyncio.get_running_loop()
         for w in self.wins.values():
-            loop.remove_reader(w.fd)
+            self.update_reading(w)
 
     def resume(self) -> None:
         if not self.paused:
             return
         self.paused = False
-        loop = asyncio.get_running_loop()
         for w in self.wins.values():
-            if not w.blocked:
-                loop.add_reader(w.fd, self.on_readable, w)
+            self.update_reading(w)
 
     async def resume_after_drain(self, bw: asyncio.StreamWriter) -> None:
         try:
@@ -187,7 +157,7 @@ class Keeper:
                 if kind == proto.DATA:
                     x = self.wins.get(wid)
                     if x:
-                        self.write_pty(x, body)  # type: ignore[arg-type]
+                        x.pty.write(body)  # type: ignore[attr-defined]
                 else:
                     self.on_ctl(body)  # type: ignore[arg-type]
         except (asyncio.IncompleteReadError, ConnectionError):
@@ -199,24 +169,18 @@ class Keeper:
                 self.resume()
             log("brain link closed")
 
-    def write_pty(self, x: Win, data: bytes) -> None:
-        # Small writes (keys, pastes); a full pty input queue would raise BlockingIOError.
-        view = memoryview(data)
-        while view:
-            try:
-                n = os.write(x.fd, view)
-                view = view[n:]
-            except BlockingIOError:
-                time.sleep(0.001)
-            except OSError:
-                return
-
     def on_ctl(self, m: dict) -> None:
         op = m.get("op")
         if op == "ack":
             self.ack(m["wid"], m["n"])
         elif op == "spawn":
-            x = self.spawn(m["cmd"], m.get("cwd"), m["cols"], m["rows"])
+            try:
+                x = self.spawn(m["cmd"], m.get("cwd"), m["cols"], m["rows"])
+            except OSError as e:                    # Windows: CreateProcess fails here
+                log("spawn failed", m["cmd"], e)    # (POSIX: the child exits 127)
+                self.to_brain(proto.pack_ctl({"op": "spawn_failed", "tag": m.get("tag"),
+                                              "error": str(e)}))
+                return
             self.to_brain(proto.pack_ctl({"op": "spawned", "wid": x.wid, "pid": x.pid,
                                           "cols": x.cols, "rows": x.rows, "cmd": x.cmd,
                                           "tag": m.get("tag")}))
@@ -227,7 +191,7 @@ class Keeper:
         elif op == "kill":
             x = self.wins.get(m["wid"])
             if x:
-                os.killpg(x.pid, signal.SIGHUP)
+                x.pty.hangup()  # type: ignore[attr-defined]
         elif op == "shutdown":
             log("shutdown requested")
             self.stopping.set()
@@ -252,27 +216,20 @@ class Keeper:
 
     async def main(self) -> None:
         path = proto.keeper_sock()
-        path.unlink(missing_ok=True)
-        server = await asyncio.start_unix_server(self.on_brain, str(path))
-        os.chmod(path, 0o600)
+        server = await platform.serve(path, self.on_brain)
         loop = asyncio.get_running_loop()
-        for s in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(s, self.stopping.set)
-        loop.add_signal_handler(signal.SIGHUP, lambda: None)
+        platform.on_stop(loop, self.stopping.set)
         log("listening", path, "pid", os.getpid())
         brain_task = loop.create_task(self.run_brain())
         await self.stopping.wait()
         for x in list(self.wins.values()):
-            try:
-                os.killpg(x.pid, signal.SIGHUP)
-            except ProcessLookupError:
-                pass
+            x.pty.hangup()  # type: ignore[attr-defined]
         if self.brain_proc and self.brain_proc.returncode is None:
             self.brain_proc.terminate()
         brain_task.cancel()
         server.close()
-        path.unlink(missing_ok=True)
-        proto.brain_sock().unlink(missing_ok=True)
+        platform.cleanup(path)
+        platform.cleanup(proto.brain_sock())
         log("bye")
 
 
