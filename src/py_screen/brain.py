@@ -26,14 +26,21 @@ from .screen import Screen
 
 FRAME = 1 / 60                   # render at most 60 times a second
 CLIENT_HIGH_WATER = 1 << 20      # a client this far behind skips frames, then gets a full redraw
-# Parsing (pyte, ~1 MB/s) is the slow part, so output is buffered raw per window and
-# parsed only when it can be seen. More than PARSE_BUDGET waiting at a frame means a
-# flood: only the last TAIL bytes are parsed, from a line start (nobody can read 256 KB
-# in 16 ms; the keeper's ring buffer still holds every byte). A hidden window keeps
-# HIDDEN_CAP bytes and is parsed when it is shown.
-PARSE_BUDGET = 256 * 1024
-TAIL = 32 * 1024
-HIDDEN_CAP = 128 * 1024
+# The screen model is lossless: every byte a window writes is parsed, in order,
+# hidden or shown, attached or not. Apps that draw by diff (Claude Code) write only
+# the cells they think changed and never rewrite one they think is right, so a
+# single lost byte would leave wrong cells for good; a lost mode switch (alternate
+# screen, cursor keys, bracketed paste) would break input too.
+# Parsing (pyte, ~0.75 MB/s of scrolling text) is the slow part, so the brain acks
+# output to the keeper only once it is parsed: a window with CREDIT un-acked bytes is
+# not read until the parser catches up, and a flooding app simply waits on its
+# write, as under GNU screen. Parsing runs in steps of at most STEP_TIME, shown
+# windows first, then the loop goes back to keys and frames, so typing stays quick.
+SLICE = 2 * 1024                 # bytes per window per turn (~3 ms of scrolling text)
+STEP_TIME = 0.002                # seconds of parsing before the loop gets control back:
+                                 # a key's echo crosses ~4 loop turns, each may start with a step
+KEY_GRACE = 0.1                  # after a key, hidden windows wait this long: nothing but
+                                 # shown windows stands between the key and its echo
 
 # Private modes the outer terminal must mirror, because it produces the input
 # (cursor-key mode, bracketed paste). pyte stores private mode N as N << 5.
@@ -145,8 +152,8 @@ class Window:
     stream: pyte.ByteStream
     title: str | None = None     # set by C-a , or a BIND entry; wins over the app's title
     pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
-    trimmed: bool = False        # bytes were dropped: repaint (SIGWINCH) when shown
-    skipped: int = 0             # bytes never parsed, for `pys ls`
+    noack: int = 0               # bytes at the front of pending that the keeper replayed:
+                                 # it doesn't count them as in flight, so they get no ack
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int) -> "Window":
@@ -163,19 +170,15 @@ class Window:
         except OSError:
             return None
 
-    def drain(self) -> bool:
-        """Parse what is pending (only its tail during a flood). True if bytes were dropped."""
-        if not self.pending:
-            return False
-        data, dropped = self.pending, False
-        if len(data) > PARSE_BUDGET:
-            cut = data.find(b"\n", len(data) - TAIL)
-            start = cut + 1 if cut >= 0 else len(data) - TAIL
-            self.skipped += start
-            data, dropped = data[start:], True
-        self.pending = bytearray()
-        self.stream.feed(bytes(data))
-        return dropped
+    def parse(self, n: int) -> int:
+        """Parse up to n pending bytes (pyte keeps its parser state between pieces, so
+        a cut inside an escape sequence is fine). Returns how many to ack."""
+        data = bytes(self.pending[:n])
+        del self.pending[:n]
+        self.stream.feed(data)
+        replayed = min(self.noack, len(data))
+        self.noack -= replayed
+        return len(data) - replayed
 
 
 @dataclass
@@ -212,6 +215,9 @@ class Brain:
         self.cfg = cfgmod.load_config()
         self.state_path = proto.runtime_dir() / "layout.json"
         self.captions: dict[int, str] = {}
+        self.parse_handle: asyncio.Handle | asyncio.TimerHandle | None = None
+        self.last_key = 0.0                      # for KEY_GRACE
+        self.parse_next = 0                      # round robin start, so no window starves
 
     # ---- small helpers ------------------------------------------------------
     @property
@@ -240,20 +246,17 @@ class Brain:
                     w = self.wins.get(wid)
                     if w:
                         w.pending += body
-                        if self.clients and wid in self.visible():
-                            self.schedule_render()
-                        elif len(w.pending) > HIDDEN_CAP:
-                            n = len(w.pending) - HIDDEN_CAP
-                            del w.pending[:n]
-                            w.skipped += n
-                            w.trimmed = True
-                    # Ack at once: the bytes are ours now, parsing is lazy.
-                    self.to_keeper(proto.pack_ctl({"op": "ack", "wid": wid, "n": len(body)}))
+                        if not self.ready.is_set():           # the keeper's replay
+                            w.noack += len(body)
+                        self.schedule_parse()
+                    else:                                     # a window we don't know yet
+                        self.to_keeper(proto.pack_ctl({"op": "ack", "wid": wid, "n": len(body)}))
                 else:
                     self.on_keeper_ctl(body)  # type: ignore[arg-type]
-                # readexactly() doesn't suspend when its buffer already holds the bytes,
-                # so without this a flood would never let the client's keys be read.
-                await asyncio.sleep(0)
+                # No yield per frame: storing a frame is cheap, and the frames already
+                # buffered are bounded (a window gets CREDIT un-acked bytes, and acks come
+                # only from parse_step, which runs between reads). Reading them all at once
+                # gets a quiet window's echo past a flooding window's frames.
         except (asyncio.IncompleteReadError, ConnectionError):
             log("keeper link lost")
             self.quit(1)
@@ -264,11 +267,11 @@ class Brain:
             for x in m["windows"]:
                 self.add_window(x)
         elif op == "replayed":
-            for w in self.wins.values():          # a 2 MB replay is parsed as a tail only
-                if len(w.pending) > HIDDEN_CAP:
-                    del w.pending[: len(w.pending) - HIDDEN_CAP]
             self.load_state()
             self.ready.set()
+            # A new brain knows only the keeper's last 2 MB of each window; if the ring
+            # wrapped, what came before is gone. The nudge (a SIGWINCH) asks full-screen
+            # apps to repaint. Open: keep the screens across a planned reload instead.
             asyncio.get_running_loop().create_task(self.nudge(list(self.wins.values())))
         elif op == "spawned":
             w = self.add_window(m)
@@ -310,6 +313,61 @@ class Brain:
         if self.last is not None and self.last in self.wins and self.last not in vis:
             return self.last
         return next((w for w in reversed(self.order) if w not in vis), None)
+
+    def schedule_parse(self) -> None:
+        if isinstance(self.parse_handle, asyncio.TimerHandle):   # waiting out KEY_GRACE:
+            self.parse_handle.cancel()                           # new output may be shown
+            self.parse_handle = None
+        if self.parse_handle is None:
+            self.parse_handle = asyncio.get_running_loop().call_soon(self.parse_step)
+
+    def parse_step(self) -> None:
+        """Parse pending output for up to STEP_TIME: shown windows first, then the
+        others round robin, SLICE bytes each per turn; ack what was parsed."""
+        self.parse_handle = None
+        todo = [w for w in self.wins.values() if w.pending]
+        if not todo:
+            return
+        shown = self.visible() if self.clients else set()
+        hidden = [w for w in todo if w.wid not in shown]
+        typing = time.monotonic() - self.last_key
+        if typing < KEY_GRACE and hidden:          # keys first: hidden output waits
+            hidden = []
+            if not any(w.wid in shown for w in todo):
+                self.parse_handle = asyncio.get_running_loop().call_later(
+                    KEY_GRACE - typing, self.parse_step)
+                return
+        k = self.parse_next % len(hidden) if hidden else 0
+        self.parse_next += 1
+        todo = [w for w in todo if w.wid in shown] + hidden[k:] + hidden[:k]
+        deadline = time.monotonic() + STEP_TIME
+        acks: dict[int, int] = {}
+        parsed_shown = parsed_hidden = False
+        while todo and time.monotonic() < deadline:
+            for w in todo:
+                acks[w.wid] = acks.get(w.wid, 0) + w.parse(SLICE)
+                if w.wid in shown:
+                    parsed_shown = True
+                else:
+                    parsed_hidden = True
+                if time.monotonic() >= deadline:
+                    break
+            todo = [w for w in todo if w.pending]
+        for wid, n in acks.items():
+            if n and wid in self.wins:
+                self.to_keeper(proto.pack_ctl({"op": "ack", "wid": wid, "n": n}))
+        if parsed_hidden:
+            self.status_dirty = True              # a hidden window's title may have changed
+        if self.clients and (parsed_shown or parsed_hidden):
+            self.schedule_render()
+        if any(w.pending for w in self.wins.values()):
+            self.schedule_parse()
+
+    def parse_all(self, w: Window) -> None:
+        """Parse everything w has pending now (a capture wants the exact screen)."""
+        n = w.parse(len(w.pending))
+        if n:
+            self.to_keeper(proto.pack_ctl({"op": "ack", "wid": w.wid, "n": n}))
 
     async def nudge(self, wins: list[Window]) -> None:
         """Change each pty's size by one row and back: SIGWINCH makes full-screen apps
@@ -366,10 +424,6 @@ class Brain:
             self.layout.focus = pane
         else:
             self.layout.focus.wid = wid
-            w = self.wins[wid]
-            if w.trimmed:                         # hidden output was dropped: repaint TUIs
-                w.trimmed = False
-                asyncio.get_running_loop().create_task(self.nudge([w]))
         self.relayout()
 
     def step(self, d: int) -> None:
@@ -571,7 +625,6 @@ class Brain:
         dirty_parts = []
         for p in panes:
             w = self.wins[p.wid]  # type: ignore[index]
-            w.drain()
             s = w.screen
             dirty = sorted(y for y in s.dirty if y < p.text_h)
             s.dirty.clear()
@@ -682,10 +735,6 @@ class Brain:
         if not self.wins:
             w = await self.spawn(cwd=hello.get("cwd"))
             self.layout.focus.wid = w.wid
-        fw = self.focused_window()
-        if fw and fw.trimmed:                     # output dropped while detached: repaint
-            fw.trimmed = False
-            asyncio.get_running_loop().create_task(self.nudge([fw]))
         self.relayout()
         try:
             while True:
@@ -706,6 +755,7 @@ class Brain:
             self.to_keeper(proto.pack(proto.DATA, self.current, data))
 
     async def keys(self, c: Client, data: bytes) -> None:
+        self.last_key = time.monotonic()
         if mouse.has_report(data):
             for part in mouse.split(data):
                 if isinstance(part, bytes):
@@ -989,7 +1039,7 @@ class Brain:
             return {"ok": True, "pid": os.getpid(), "current": self.current,
                     "clients": len(self.clients), "size": [self.cols, self.rows],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
-                                 "cmd": w.cmd, "cwd": w.cwd(), "skipped": w.skipped,
+                                 "cmd": w.cmd, "cwd": w.cwd(),
                                  "pending": len(w.pending)} for w in
                                 (self.wins[i] for i in self.order)],
                     "panes": [{"wid": p.wid, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
@@ -999,7 +1049,7 @@ class Brain:
             return {"ok": True}
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
-            w.drain()
+            self.parse_all(w)
             return {"ok": True, "lines": w.screen.display,
                     "cursor": [w.screen.cursor.x, w.screen.cursor.y]}
         if cmd == "new":

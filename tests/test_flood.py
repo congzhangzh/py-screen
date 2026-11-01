@@ -82,8 +82,7 @@ def test_visible_flood_ends_on_the_right_screen(sess):
     end = next(i for i, line in enumerate(lines) if line == "END-2")
     assert lines[end - 1] == "3000000", lines[end - 3:end + 1]
     assert lines[end - 2] == "2999999"
-    skipped = json.loads(sess.pys("ls", "--json"))["windows"][0]["skipped"]
-    print(f"\nvisible seq 1..3000000: {took:.1f} s, {skipped} bytes never parsed")
+    print(f"\nvisible seq 1..3000000: {took:.1f} s, every byte parsed")
     t.close()
 
 
@@ -98,7 +97,7 @@ def test_hidden_flood_shows_its_end_when_selected(sess):
     assert done.exists(), "hidden seq did not finish"
     time.sleep(0.5)
     w = json.loads(sess.pys("ls", "--json"))["windows"][1]
-    assert w["skipped"] > 1_000_000, w                 # the hidden flood really was trimmed
+    assert w["pending"] < 1 << 20, w                   # backpressure: the parser kept up
     t.send(C_RB + "1")
     t.wait_for("HIDDEN-DONE", timeout=5)
     lines = [line.rstrip() for line in t.text().splitlines()]

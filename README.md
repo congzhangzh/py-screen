@@ -2,7 +2,7 @@
 
 A terminal workspace of my own, in Python: not a clone of screen or tmux, built for fun,
 made more powerful and improved by daily use. The design is in [`spec/`](spec/); the
-current version is [`spec/spec.v2.md`](spec/spec.v2.md).
+current version is [`spec/spec.v3.md`](spec/spec.v3.md).
 
 Status: **M1 in progress** (Linux; Windows pieces checked on CI). One server, many windows, attach/detach, hot reload, flood-safe typing.
 
@@ -21,22 +21,29 @@ client (pys attach) ──► brain (Python, restartable) ──► keeper (tiny
 - **client** puts the terminal in raw mode, forwards keys and size, prints frames, and
   reconnects by itself across a brain reload.
 
-### Floods (M1)
+### Floods: the screen model is lossless
 
-Parsing (pyte, about 1 MB/s) is the slow part, so a flood must never cost typing:
+Every byte a window writes is parsed, in order, whether the window is shown or hidden,
+attached or not. That matters most for apps that draw by diff, like Claude Code: they
+write only the cells they think changed and never rewrite a cell they think is right, so
+a single lost byte leaves wrong cells for good (and a lost mode switch, such as the
+alternate screen or bracketed paste, breaks input too). Until 2026-11-01 py-screen parsed
+only the tail of a flood and dropped a hidden window's output past 128 KB; that is what
+left stray characters in Claude's status line.
 
-- The keeper gives each window a **credit** of 256 KB un-acked output; past it, it stops
-  reading that pty until the brain acks. One window can't fill the shared stream, so the
-  echo of another never waits behind megabytes of it.
-- The brain **yields after every frame** (`readexactly()` doesn't suspend when its buffer
-  already holds the bytes, so a flood would otherwise starve the client's keys).
-- Output is kept raw and **parsed only when it can be seen**. When more than 256 KB waits
-  at a frame, only the last 32 KB is parsed, from a line start. A hidden window keeps its
-  last 128 KB, is parsed when shown, and gets a `SIGWINCH` nudge so TUIs repaint.
-  `pys ls --json` reports `skipped` bytes per window.
+Parsing (pyte, about 0.75 MB/s of scrolling text) is the slow part, so:
 
-Trade-off: bytes skipped during a flood are not in the brain's screen history. The keeper's
-2 MB ring buffer still holds them; scrollback (M2) will read from there.
+- **Backpressure, not dropping.** The keeper gives each window a **credit** of 256 KB
+  un-acked output and stops reading that pty past it. The brain acks bytes only once it
+  has parsed them, so a flooding app simply waits on its write, as under GNU screen. One
+  window can't fill the shared stream, so another window's echo never waits behind it.
+- **Small steps.** The brain parses in steps of 2 ms (2 KB per window per turn, shown
+  windows first, the others round robin), then goes back to keys and frames.
+- **Keys first.** For 100 ms after a key, only shown windows are parsed: nothing else
+  stands between a key and its echo (about 2 ms median while a hidden window floods).
+
+Trade-off: a flood runs at the parser's speed, slower than GNU screen's C parser (numbers
+in [`bench/results/`](bench/results/)). A faster parser is the next step (spec §8.1).
 
 ## Use
 
@@ -123,7 +130,9 @@ Results of each run are kept in [`bench/results/`](bench/results/), one file per
 
 - A mouse report split across two reads is passed on as keys (rare; the outer terminal
   writes each report at once).
-- A hidden window's title in the status line updates only when the window is shown
-  (its output isn't parsed until then).
+- After a brain restart the screens are rebuilt from the keeper's last 2 MB per window; if
+  that ring wrapped, older state is gone and full-screen apps get a `SIGWINCH` to repaint.
+  Keeping the screens across a planned reload is open.
+- Floods are bounded by pyte's speed (see "Floods").
 - No scrollback view yet (M2).
 - Linux (and macOS) only for now; the Windows pieces are checked by the manual CI run.
