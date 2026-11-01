@@ -107,6 +107,18 @@ def fit(s: str, n: int) -> str:
     return "".join(out) + " " * (n - w)
 
 
+def fit_tail(s: str, n: int) -> str:
+    """The last n terminal cells of s, padded on the left to exactly n."""
+    out, w = [], 0
+    for ch in reversed(s):
+        cw = max(0, wcswidth(ch))
+        if w + cw > n:
+            break
+        out.append(ch)
+        w += cw
+    return " " * (n - w) + "".join(reversed(out))
+
+
 @dataclass
 class Window:
     wid: int
@@ -510,13 +522,27 @@ class Brain:
         return row + left + gap + "".join(right_parts) + "\x1b[0m"
 
     def status_right(self) -> tuple[list[str], int]:
-        right_parts, right_w = [], 0
+        """The widgets, cut to fit: they get at most two thirds of the line after " pys ",
+        so the window tabs keep a third. A widget that doesn't fit is cut from its left
+        ("…" marks the cut) and the ones before it are dropped, so the last widgets (load,
+        clock) stay. Without the cut, a long widget ran past the bottom-right corner and
+        the terminal scrolled by a line on every status redraw."""
         texts = [wd.text for wd in self.cfg.widgets if wd.text]
         if self.cfg.error:
             texts.insert(0, self.cfg.error)
-        for i, t in enumerate(texts):
-            seg = f" {t} "
-            right_parts.append(f"\x1b[0;{WIDGET_COLORS[i % len(WIDGET_COLORS)]};40m{seg}")
+        budget = max(0, self.cols - 5 - self.cols // 3)
+        right_parts: list[str] = []
+        right_w = 0
+        for i in range(len(texts) - 1, -1, -1):
+            seg = f" {texts[i]} "
+            color = f"\x1b[0;{WIDGET_COLORS[i % len(WIDGET_COLORS)]};40m"
+            room = budget - right_w
+            if width(seg) > room:
+                if room >= 3:
+                    right_parts.insert(0, color + "…" + fit_tail(seg, room - 1))
+                    right_w = budget
+                break
+            right_parts.insert(0, color + seg)
             right_w += width(seg)
         return right_parts, right_w
 
@@ -679,7 +705,11 @@ class Brain:
             modes_s = "".join(f"\x1b[?{m}h" for m in mw - c.modes)
             modes_s += "".join(f"\x1b[?{m}l" for m in c.modes - mw)
             c.modes = mw
-            frame = "\x1b[?2026h\x1b[?25l" + modes_s + body + cur + "\x1b[?2026l"
+            # ?7l: no autowrap in the client's terminal while attached (the client turns
+            # it back on when it leaves). Every row is placed with CUP, so pys never
+            # needs a wrap, and a row that runs one cell too wide (a character the
+            # terminal draws wider than wcwidth says, like ⚠️) can't scroll the screen.
+            frame = "\x1b[?2026h\x1b[?25l\x1b[?7l" + modes_s + body + cur + "\x1b[?2026l"
             c.writer.write(proto.pack(proto.DATA, 0, frame.encode()))
         self.status_dirty = False
 
