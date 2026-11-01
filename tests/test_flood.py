@@ -75,7 +75,7 @@ def test_typing_while_hidden_window_floods(sess):
 def test_visible_flood_ends_on_the_right_screen(sess):
     t = attach(sess)
     t0 = time.monotonic()
-    t.send("seq 1 3000000; echo END-$((1+1))\r")
+    t.send("seq -f %.0f 1 3000000; echo END-$((1+1))\r")   # -f: BSD seq prints 3e+06
     t.wait_for("END-2", timeout=120)
     took = time.monotonic() - t0
     lines = [line.rstrip() for line in t.text().splitlines()]
@@ -89,14 +89,16 @@ def test_visible_flood_ends_on_the_right_screen(sess):
 
 def test_hidden_flood_shows_its_end_when_selected(sess):
     t = attach(sess)
-    sess.pys("new", "--", "sh", "-c", "seq 1 2000000; echo HIDDEN-DONE; exec sleep 600")
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        w = json.loads(sess.pys("ls", "--json"))["windows"][1]
-        if w["pending"] and w["skipped"] > 1_000_000:
-            break
+    done = sess.dir / "hidden.done"
+    sess.pys("new", "--", "sh", "-c",
+             f"seq -f %.0f 1 2000000; echo HIDDEN-DONE; touch {done}; exec sleep 600")
+    deadline = time.monotonic() + 120                  # slow CI runners: wait for the fact
+    while not done.exists() and time.monotonic() < deadline:
         time.sleep(0.2)
-    time.sleep(1.0)
+    assert done.exists(), "hidden seq did not finish"
+    time.sleep(0.5)
+    w = json.loads(sess.pys("ls", "--json"))["windows"][1]
+    assert w["skipped"] > 1_000_000, w                 # the hidden flood really was trimmed
     t.send(C_RB + "1")
     t.wait_for("HIDDEN-DONE", timeout=5)
     lines = [line.rstrip() for line in t.text().splitlines()]
