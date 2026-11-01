@@ -18,7 +18,9 @@ py=${PYTHON:-python3}
 inc=$("$py" -c 'import sysconfig; print(sysconfig.get_paths()["include"])')
 ext=$("$py" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')
 mkdir -p "$out/py_screen"
-cp "$root"/src/py_screen/*.py "$out/py_screen/"
+# the whole package, subpackages too (platform/), without caches or a built extension
+(cd "$root/src/py_screen" && find . -name __pycache__ -prune -o -name '*.py' -print |
+	while read -r f; do mkdir -p "$out/py_screen/$(dirname "$f")"; cp "$f" "$out/py_screen/$f"; done)
 ${CC:-gcc} -shared -fPIC -g -O1 -fno-omit-frame-pointer \
     -fsanitize=address,undefined -fno-sanitize-recover=undefined \
     -I"$inc" -I"$root/deps/libvterm/include" -I"$root/deps/libvterm/src" \
