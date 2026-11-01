@@ -167,6 +167,9 @@ class Client:
     help_hits: dict[tuple[int, int], int] = field(default_factory=dict)  # (row, help column) → wid
     help_cw: int = 80             # the help's column width, to map a click to its column
     help_page: int = 0
+    cols: int = 80                # this client's terminal; the layout follows the client
+    rows: int = 24                # that was active last, the others see a cropped view
+    seen: float = 0.0             # when it last attached, resized or typed
 
 
 class Brain:
@@ -378,6 +381,18 @@ class Brain:
             self.cols, self.rows = cols, rows
             self.relayout()
 
+    def activate(self, c: Client) -> None:
+        """c attached, resized or typed: the layout takes its size (as tmux's
+        window-size latest). Every other client gets a view cropped to its own terminal."""
+        c.seen = time.monotonic()
+        self.set_size(c.cols, c.rows)
+
+    def follow_latest(self) -> None:
+        """The active client left: the size goes to the one active most recently."""
+        if self.clients:
+            c = max(self.clients, key=lambda k: k.seen)
+            self.set_size(c.cols, c.rows)
+
     def relayout(self) -> None:
         """Place panes, give each shown window its pane's size, redraw, save."""
         self.layout.place(self.cols, self.rows - 1)
@@ -477,51 +492,73 @@ class Brain:
         else:
             self.render_handle = loop.call_later(wait, self.render)
 
-    def line(self, t: term.Term, y: int, p: Pane) -> str:
-        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y, p.w)
+    # A view is the size of the terminal a frame is drawn for: (cols, rows). The layout
+    # has the active client's size; another client's view crops it to its own terminal,
+    # with its status line on its own bottom row. Nothing is drawn past a view's edge or
+    # on its status row, so a frame always fits the terminal it lands in.
+    def view(self, c: Client | None) -> tuple[int, int]:
+        return (c.cols, c.rows) if c else (self.cols, self.rows)
 
-    def caption(self, p: Pane) -> str:
+    def line(self, t: term.Term, y: int, p: Pane, vc: int | None = None) -> str:
+        w = p.w if vc is None else min(p.w, vc - p.x)
+        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y, w)
+
+    @staticmethod
+    def shown(p: Pane, y: int, vc: int, vr: int) -> bool:
+        """Pane row y (the caption is y = p.h - 1) is inside view (vc, vr)."""
+        return p.x < vc and p.y + y < vr - 1
+
+    def caption(self, p: Pane, vc: int | None = None) -> str:
         w = self.wins.get(p.wid) if p.wid is not None else None
         label = f" {p.wid} {w.name} " if w else " (empty) "
         rest = f" {w.cwd() or ''} " if w else ""
         focused = p is self.layout.focus
         a, b = ("\x1b[0;30;43m", "\x1b[0;33;40m") if focused else ("\x1b[0;37;100m", "\x1b[0;90;40m")
-        lw = min(width(label), p.w)
-        return (f"\x1b[{p.y + p.h};{p.x + 1}H{a}{fit(label, lw)}{b}{fit(rest, p.w - lw)}\x1b[0m")
+        pw = p.w if vc is None else min(p.w, vc - p.x)
+        lw = min(width(label), pw)
+        return (f"\x1b[{p.y + p.h};{p.x + 1}H{a}{fit(label, lw)}{b}{fit(rest, pw - lw)}\x1b[0m")
 
-    def pane_full(self, p: Pane) -> str:
+    def pane_full(self, p: Pane, vc: int, vr: int) -> str:
+        if not self.shown(p, 0, vc, vr):
+            return ""
+        pw = min(p.w, vc - p.x)
         w = self.wins.get(p.wid) if p.wid is not None else None
         out = []
         if w:
             s = w.term
-            out.extend(self.line(s, y, p) for y in range(min(s.lines, p.text_h)))
+            out.extend(self.line(s, y, p, vc) for y in range(min(s.lines, p.text_h))
+                       if self.shown(p, y, vc, vr))
         else:
-            out.extend(f"\x1b[{p.y + y + 1};{p.x + 1}H\x1b[0m{' ' * p.w}" for y in range(p.text_h))
-        out.append(self.caption(p))
+            out.extend(f"\x1b[{p.y + y + 1};{p.x + 1}H\x1b[0m{' ' * pw}" for y in range(p.text_h)
+                       if self.shown(p, y, vc, vr))
+        if self.shown(p, p.h - 1, vc, vr):
+            out.append(self.caption(p, vc))
         return "".join(out)
 
-    def separators(self) -> str:
+    def separators(self, vc: int, vr: int) -> str:
         return "".join(f"\x1b[{y + i + 1};{x + 1}H\x1b[0;90m│\x1b[0m"
-                       for x, y, h in self.layout.separators for i in range(h))
+                       for x, y, h in self.layout.separators for i in range(h)
+                       if x < vc and y + i < vr - 1)
 
     def status_line(self, c: Client | None = None) -> str:
-        row = f"\x1b[{self.rows};1H"
+        cols, rows = self.view(c)
+        row = f"\x1b[{rows};1H"
         if c and c.mode == "rename":
             return row + "\x1b[0;30;46m" + fit(f" title for window {self.current}: {c.buf}▏",
-                                               self.cols) + "\x1b[0m"
+                                               cols) + "\x1b[0m"
         if c and c.mode == "resize":
             return row + "\x1b[0;30;46m" + fit(" resize: h/l width, j/k height, = equal, "
-                                               "other key ends", self.cols) + "\x1b[0m"
-        right_parts, right_w = self.status_right()
+                                               "other key ends", cols) + "\x1b[0m"
+        right_parts, right_w = self.status_right(cols)
         left, left_w = "\x1b[0;30;46m pys \x1b[0m", 5
         used = 0
-        for wid, label, x in self.status_tabs(right_w):
+        for wid, label, x in self.status_tabs(right_w, cols):
             left += (f"\x1b[0;30;43m{label}\x1b[0m" if wid == self.current else label)
             used = x + width(label) - left_w
-        gap = " " * max(0, self.cols - left_w - used - right_w)
+        gap = " " * max(0, cols - left_w - used - right_w)
         return row + left + gap + "".join(right_parts) + "\x1b[0m"
 
-    def status_right(self) -> tuple[list[str], int]:
+    def status_right(self, cols: int | None = None) -> tuple[list[str], int]:
         """The widgets, cut to fit: they get at most two thirds of the line after " pys ",
         so the window tabs keep a third. A widget that doesn't fit is cut from its left
         ("…" marks the cut) and the ones before it are dropped, so the last widgets (load,
@@ -530,7 +567,8 @@ class Brain:
         texts = [wd.text for wd in self.cfg.widgets if wd.text]
         if self.cfg.error:
             texts.insert(0, self.cfg.error)
-        budget = max(0, self.cols - 5 - self.cols // 3)
+        cols = self.cols if cols is None else cols
+        budget = max(0, cols - 5 - cols // 3)
         right_parts: list[str] = []
         right_w = 0
         for i in range(len(texts) - 1, -1, -1):
@@ -546,9 +584,10 @@ class Brain:
             right_w += width(seg)
         return right_parts, right_w
 
-    def status_tabs(self, right_w: int) -> list[tuple[int, str, int]]:
+    def status_tabs(self, right_w: int, cols: int | None = None) -> list[tuple[int, str, int]]:
         """The window labels that fit in the status line: (wid, label, start column)."""
-        x, budget, out = 5, max(0, self.cols - 5 - right_w), []
+        cols = self.cols if cols is None else cols
+        x, budget, out = 5, max(0, cols - 5 - right_w), []
         for wid in self.order:
             w = self.wins[wid]
             flag = "*" if wid == self.current else ("-" if wid == self.last else "")
@@ -560,17 +599,17 @@ class Brain:
         return out
 
     def window_list(self, c: Client) -> str:
-        area = self.rows - 1
-        rows = [fit(" Num  Title" + " " * 20 + "Dir", self.cols)]
+        area = c.rows - 1
+        rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
             w = self.wins[wid]
-            rows.append((i, fit(f" {wid:>3}  {fit(w.name, 24)} {w.cwd() or ''}", self.cols)))
+            rows.append((i, fit(f" {wid:>3}  {fit(w.name, 24)} {w.cwd() or ''}", c.cols)))
         out = [f"\x1b[1;1H\x1b[0;30;46m{rows[0]}\x1b[0m"]
         for y, (i, text) in enumerate(rows[1:area], start=1):
             attr = "\x1b[0;30;43m" if i == c.list_idx else "\x1b[0m"
             out.append(f"\x1b[{y + 1};1H{attr}{text}\x1b[0m")
         for y in range(len(rows), area):
-            out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * self.cols}")
+            out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * c.cols}")
         return "".join(out)
 
     def help_sections(self, c: Client) -> list[list[str]]:
@@ -600,10 +639,10 @@ class Brain:
         "(more)"; a heading never sits alone at the bottom. Returns the
         columns, how many fit side by side (only as many as fit without cutting a key's
         text) and the height. Rows carry the wid of a window row, for digits and clicks."""
-        h = max(1, self.rows - 1 - 3)            # between title + blank and the footer
+        h = max(1, c.rows - 1 - 3)            # between title + blank and the footer
         secs = self.help_sections(c)
         need = max(width(t) for sec in secs[1:] for t in sec) + 2
-        per_page = max(1, min(3, self.cols // need))
+        per_page = max(1, min(3, c.cols // need))
         cols: list[list[tuple[str, int | None]]] = [[]]
         for i, sec in enumerate(secs):
             wids: list[int | None] = [None] + list(self.order) if i == 0 else [None] * len(sec)
@@ -628,8 +667,8 @@ class Brain:
         pages = -(-len(cols) // per_page)
         c.help_page %= pages
         shown = cols[c.help_page * per_page:(c.help_page + 1) * per_page]
-        cw = self.cols // per_page
-        area = self.rows - 1
+        cw = c.cols // per_page
+        area = c.rows - 1
         c.help_hits, c.help_cw = {}, cw
         lines = [" py-screen help", ""]
         for k in range(h):
@@ -648,7 +687,7 @@ class Brain:
         for y in range(area):
             attr = "\x1b[0;30;46m" if y == 0 else "\x1b[0m"
             text = lines[y] if y < len(lines) else ""
-            out.append(f"\x1b[{y + 1};1H{attr}{fit(text, self.cols)}\x1b[0m")
+            out.append(f"\x1b[{y + 1};1H{attr}{fit(text, c.cols)}\x1b[0m")
         return "".join(out)
 
     def render(self) -> None:
@@ -656,22 +695,40 @@ class Brain:
         self.last_render = time.monotonic()
         if not self.clients:
             return                                # parse later, when someone looks
-        panes = [p for p in self.layout.panes() if p.wid in self.wins]
-        dirty_parts = []
-        for p in panes:
-            w = self.wins[p.wid]  # type: ignore[index]
-            s = w.term
-            dirty = sorted(y for y in s.take_dirty() if y < p.text_h)
-            dirty_parts.extend(self.line(s, y, p) for y in dirty)
-        captions = {id(p): self.caption(p) for p in self.layout.panes()}
-        dirty_parts.extend(cap for k, cap in captions.items() if self.captions.get(k) != cap)
+        dirty_rows = []
+        for p in self.layout.panes():
+            if p.wid in self.wins:
+                s = self.wins[p.wid].term  # type: ignore[index]
+                dirty_rows.append((p, s, sorted(y for y in s.take_dirty() if y < p.text_h)))
+        all_panes = self.layout.panes()
+        captions = {id(p): self.caption(p) for p in all_panes}
+        recaption = [p for p in all_panes if self.captions.get(id(p)) != captions[id(p)]]
         self.captions = captions                  # a title or cwd change redraws its caption
-        body_dirty = "".join(dirty_parts)
-        body_full: str | None = None
+        bodies_dirty: dict[tuple[int, int], str] = {}   # one body per view size
+        bodies_full: dict[tuple[int, int], str] = {}
+
+        def body_dirty(vc: int, vr: int) -> str:
+            if (vc, vr) not in bodies_dirty:
+                whole = (vc, vr) == (self.cols, self.rows)
+                parts = [self.line(s, y, p, vc) for p, s, ys in dirty_rows for y in ys
+                         if whole or self.shown(p, y, vc, vr)]
+                parts.extend(captions[id(p)] if whole else self.caption(p, vc) for p in recaption
+                             if whole or self.shown(p, p.h - 1, vc, vr))
+                bodies_dirty[(vc, vr)] = "".join(parts)
+            return bodies_dirty[(vc, vr)]
+
+        def body_full(vc: int, vr: int) -> str:
+            if (vc, vr) not in bodies_full:
+                bodies_full[(vc, vr)] = ("\x1b[0m\x1b[2J" + "".join(self.pane_full(p, vc, vr)
+                                                                   for p in all_panes)
+                                         + self.separators(vc, vr))
+            return bodies_full[(vc, vr)]
+
         fw = self.focused_window()
         f = self.layout.focus
         want: set[int] = set()
-        tail = ""
+        cursor: tuple[int, int] | None = None     # where the focused app's cursor shows
+        show_cursor = False
         lvl = max(mouse.level(fw.term.mode) if fw else 0, 1002 if self.cfg.mouse else 0)
         mouse_want = {lvl, mouse.SGR} if lvl else set()
         overlay_mouse = {1000, mouse.SGR} if self.cfg.mouse else set()
@@ -680,27 +737,27 @@ class Brain:
             want = {m for m in SYNC_MODES if s.mode(m)}
             x, y = s.cursor
             cx, cy = min(x, s.columns - 1), min(y, f.text_h - 1)
-            tail = f"\x1b[{f.y + cy + 1};{f.x + cx + 1}H" + ("" if s.cursor_hidden else "\x1b[?25h")
+            cursor, show_cursor = (f.x + cx, f.y + cy), not s.cursor_hidden
         for c in self.clients:
             if c.writer.is_closing():
                 continue
             if c.writer.transport.get_write_buffer_size() > CLIENT_HIGH_WATER:
                 c.stale = True                # slow client: skip, redraw fully later
                 continue
+            vc, vr = c.cols, c.rows
             if c.stale:
-                if body_full is None:
-                    body_full = ("\x1b[0m\x1b[2J" + "".join(self.pane_full(p) for p in self.layout.panes())
-                                 + self.separators())
-                body = body_full + self.status_line(c)
+                body = body_full(vc, vr) + self.status_line(c)
                 c.stale = False
             else:
-                body = body_dirty + (self.status_line(c) if self.status_dirty else "")
+                body = body_dirty(vc, vr) + (self.status_line(c) if self.status_dirty else "")
             if c.mode == "list":
                 body += self.window_list(c)
             elif c.mode == "help":
                 body += self.help_screen(c)
             overlay = c.mode in ("list", "help")
-            cur = "" if overlay else tail
+            cur = ""
+            if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - 1:
+                cur = f"\x1b[{cursor[1] + 1};{cursor[0] + 1}H" + ("\x1b[?25h" if show_cursor else "")
             mw = overlay_mouse if overlay else want | mouse_want
             modes_s = "".join(f"\x1b[?{m}h" for m in mw - c.modes)
             modes_s += "".join(f"\x1b[?{m}l" for m in c.modes - mw)
@@ -767,9 +824,9 @@ class Brain:
 
     async def client_loop(self, r: asyncio.StreamReader, wr: asyncio.StreamWriter,
                           hello: dict) -> None:
-        c = Client(wr, prefix=self.client_prefix(hello))
+        c = Client(wr, prefix=self.client_prefix(hello), cols=hello["cols"], rows=hello["rows"])
         self.clients.append(c)
-        self.set_size(hello["cols"], hello["rows"])
+        self.activate(c)
         self.layout.place(self.cols, self.rows - 1)
         if not self.wins:
             w = await self.spawn(cwd=hello.get("cwd"))
@@ -781,12 +838,16 @@ class Brain:
                 if kind == proto.DATA:
                     await self.keys(c, body)  # type: ignore[arg-type]
                 elif body.get("op") == "resize":  # type: ignore[union-attr]
-                    self.set_size(body["cols"], body["rows"])  # type: ignore[index]
+                    c.cols, c.rows = body["cols"], body["rows"]  # type: ignore[index]
+                    c.stale = True
+                    self.activate(c)
+                    self.schedule_render()
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
             if c in self.clients:
                 self.clients.remove(c)
+                self.follow_latest()
             wr.close()
 
     def send_keys(self, data: bytes) -> None:
@@ -795,6 +856,7 @@ class Brain:
 
     async def keys(self, c: Client, data: bytes) -> None:
         self.last_key = time.monotonic()
+        self.activate(c)          # first, so a click's coordinates are in c's layout
         if mouse.has_report(data):
             for part in mouse.split(data):
                 if isinstance(part, bytes):
@@ -1092,6 +1154,7 @@ class Brain:
         if cmd == "ls":
             return {"ok": True, "pid": os.getpid(), "current": self.current,
                     "clients": len(self.clients), "size": [self.cols, self.rows],
+                    "client_sizes": [[c.cols, c.rows] for c in self.clients],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
                                  "cmd": w.cmd, "cwd": w.cwd(),
                                  "pending": len(w.pending)} for w in
