@@ -7,6 +7,7 @@ authors = [
     { name = "Cong Zhang", email = "13283869+congzhangzh@users.noreply.github.com" }
 ]
 license = "MIT"
+license-files = ["LICENSE", "deps/libvterm/LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "pyte>=0.8.2",
@@ -16,8 +17,12 @@ dependencies = [
 pys = "py_screen:main"
 
 [build-system]
-requires = ["uv_build>=0.11.6,<0.12.0"]
-build-backend = "uv_build"
+# setuptools, not uv_build: uv_build has no C extensions. setup.py adds _vterm.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [

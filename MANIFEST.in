@@ -1,0 +1,3 @@
+# The sdist carries libvterm's sources and licence, so a wheel builds from it alone.
+graft deps/libvterm
+include deps/README.md
