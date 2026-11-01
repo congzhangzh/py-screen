@@ -17,13 +17,11 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-import pyte
 from wcwidth import wcswidth
 
 from . import config as cfgmod
-from . import mouse, proto
+from . import mouse, proto, term
 from .layout import Layout, Pane, Split
-from .screen import Screen, Stream
 
 FRAME = 1 / 60                   # render at most 60 times a second
 CLIENT_HIGH_WATER = 1 << 20      # a client this far behind skips frames, then gets a full redraw
@@ -44,13 +42,11 @@ KEY_GRACE = 0.1                  # after a key, hidden windows wait this long: n
                                  # shown windows stands between the key and its echo
 
 # Private modes the outer terminal must mirror, because it produces the input
-# (cursor-key mode, bracketed paste). pyte stores private mode N as N << 5.
+# (cursor-key mode, bracketed paste).
 # The mouse is not mirrored: the brain asks for SGR reports itself and routes
 # each one to the pane under the pointer (see mouse.py and Brain.on_mouse).
 SYNC_MODES = (1, 2004)
 WHEEL_LINES = 3                  # arrow keys per wheel notch for a full-screen app without mouse
-COLORS = {"black": 0, "red": 1, "green": 2, "brown": 3, "blue": 4,
-          "magenta": 5, "cyan": 6, "white": 7}
 WIDGET_COLORS = (33, 36, 32, 37)
 
 UP = (b"\x1b[A", b"\x1bOA", b"k")
@@ -111,46 +107,12 @@ def fit(s: str, n: int) -> str:
     return "".join(out) + " " * (n - w)
 
 
-def sgr_color(c: str, base: int) -> str:
-    if c == "default":
-        return str(base + 9)
-    if c in COLORS:
-        return str(base + COLORS[c])
-    if c.startswith("bright") and c[6:] in COLORS:
-        return str(base + 60 + COLORS[c[6:]])
-    if len(c) == 6:
-        try:
-            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-            return f"{base + 8};2;{r};{g};{b}"
-        except ValueError:
-            pass
-    return str(base + 9)
-
-
-_sgr_cache: dict[tuple, str] = {}
-
-
-def sgr(ch: pyte.screens.Char) -> str:
-    key = (ch.fg, ch.bg, ch.bold, ch.italics, ch.underscore,
-           ch.strikethrough, ch.reverse, ch.blink)
-    s = _sgr_cache.get(key)
-    if s is None:
-        parts = ["0", sgr_color(ch.fg, 30), sgr_color(ch.bg, 40)]
-        for flag, code in ((ch.bold, "1"), (ch.italics, "3"), (ch.underscore, "4"),
-                           (ch.blink, "5"), (ch.reverse, "7"), (ch.strikethrough, "9")):
-            if flag:
-                parts.append(code)
-        s = _sgr_cache[key] = "\x1b[" + ";".join(parts) + "m"
-    return s
-
-
 @dataclass
 class Window:
     wid: int
     pid: int
     cmd: list[str]
-    screen: Screen
-    stream: Stream
+    term: term.Term
     title: str | None = None     # set by C-a , or a BIND entry; wins over the app's title
     pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
     noack: int = 0               # bytes at the front of pending that the keeper replayed:
@@ -158,12 +120,11 @@ class Window:
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int) -> "Window":
-        screen = Screen(cols, rows)
-        return cls(wid, pid, cmd, screen, Stream(screen))
+        return cls(wid, pid, cmd, term.new(cols, rows))
 
     @property
     def name(self) -> str:
-        return self.title or self.screen.title or os.path.basename(self.cmd[0])
+        return self.title or self.term.title or os.path.basename(self.cmd[0])
 
     def cwd(self) -> str | None:
         try:
@@ -172,11 +133,11 @@ class Window:
             return None
 
     def parse(self, n: int) -> int:
-        """Parse up to n pending bytes (pyte keeps its parser state between pieces, so
-        a cut inside an escape sequence is fine). Returns how many to ack."""
+        """Parse up to n pending bytes (the term keeps its parser state between pieces,
+        so a cut inside an escape sequence is fine). Returns how many to ack."""
         data = bytes(self.pending[:n])
         del self.pending[:n]
-        self.stream.feed(data)
+        self.term.feed(data)
         replayed = min(self.noack, len(data))
         self.noack -= replayed
         return len(data) - replayed
@@ -377,12 +338,12 @@ class Brain:
         """Change each pty's size by one row and back: SIGWINCH makes full-screen apps
         repaint what replayed or dropped bytes could not rebuild."""
         for w in wins:
-            s = w.screen
+            s = w.term
             self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
                                            "cols": s.columns, "rows": max(1, s.lines - 1)}))
         await asyncio.sleep(0.05)
         for w in wins:
-            s = w.screen
+            s = w.term
             self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
                                            "cols": s.columns, "rows": s.lines}))
 
@@ -410,8 +371,8 @@ class Brain:
         self.layout.place(self.cols, self.rows - 1)
         for p in self.layout.panes():
             w = self.wins.get(p.wid) if p.wid is not None else None
-            if w and (w.screen.columns, w.screen.lines) != (p.w, p.text_h):
-                w.screen.resize(p.text_h, p.w)
+            if w and (w.term.columns, w.term.lines) != (p.w, p.text_h):
+                w.term.resize(p.text_h, p.w)
                 self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
                                                "cols": p.w, "rows": p.text_h}))
         self.mark_all_stale()
@@ -504,21 +465,8 @@ class Brain:
         else:
             self.render_handle = loop.call_later(wait, self.render)
 
-    def line(self, screen: Screen, y: int, p: Pane) -> str:
-        row = screen.buffer[y]
-        out = [f"\x1b[{p.y + y + 1};{p.x + 1}H"]
-        last = None
-        for x in range(min(screen.columns, p.w)):
-            ch = row[x]
-            if ch.data == "":                 # right half of a wide character
-                continue
-            s = sgr(ch)
-            if s is not last:
-                out.append(s)
-                last = s
-            out.append(ch.data)
-        out.append("\x1b[0m")
-        return "".join(out)
+    def line(self, t: term.Term, y: int, p: Pane) -> str:
+        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y, p.w)
 
     def caption(self, p: Pane) -> str:
         w = self.wins.get(p.wid) if p.wid is not None else None
@@ -533,7 +481,7 @@ class Brain:
         w = self.wins.get(p.wid) if p.wid is not None else None
         out = []
         if w:
-            s = w.screen
+            s = w.term
             out.extend(self.line(s, y, p) for y in range(min(s.lines, p.text_h)))
         else:
             out.extend(f"\x1b[{p.y + y + 1};{p.x + 1}H\x1b[0m{' ' * p.w}" for y in range(p.text_h))
@@ -686,9 +634,8 @@ class Brain:
         dirty_parts = []
         for p in panes:
             w = self.wins[p.wid]  # type: ignore[index]
-            s = w.screen
-            dirty = sorted(y for y in s.dirty if y < p.text_h)
-            s.dirty.clear()
+            s = w.term
+            dirty = sorted(y for y in s.take_dirty() if y < p.text_h)
             dirty_parts.extend(self.line(s, y, p) for y in dirty)
         captions = {id(p): self.caption(p) for p in self.layout.panes()}
         dirty_parts.extend(cap for k, cap in captions.items() if self.captions.get(k) != cap)
@@ -699,14 +646,15 @@ class Brain:
         f = self.layout.focus
         want: set[int] = set()
         tail = ""
-        lvl = max(mouse.level(fw.screen.mode) if fw else 0, 1002 if self.cfg.mouse else 0)
+        lvl = max(mouse.level(fw.term.mode) if fw else 0, 1002 if self.cfg.mouse else 0)
         mouse_want = {lvl, mouse.SGR} if lvl else set()
         overlay_mouse = {1000, mouse.SGR} if self.cfg.mouse else set()
         if fw:
-            s = fw.screen
-            want = {m for m in SYNC_MODES if (m << 5) in s.mode}
-            cx, cy = min(s.cursor.x, s.columns - 1), min(s.cursor.y, f.text_h - 1)
-            tail = f"\x1b[{f.y + cy + 1};{f.x + cx + 1}H" + ("" if s.cursor.hidden else "\x1b[?25h")
+            s = fw.term
+            want = {m for m in SYNC_MODES if s.mode(m)}
+            x, y = s.cursor
+            cx, cy = min(x, s.columns - 1), min(y, f.text_h - 1)
+            tail = f"\x1b[{f.y + cy + 1};{f.x + cx + 1}H" + ("" if s.cursor_hidden else "\x1b[?25h")
         for c in self.clients:
             if c.writer.is_closing():
                 continue
@@ -830,11 +778,11 @@ class Brain:
     def to_pane(self, p: Pane, ev: mouse.Event) -> bool:
         """Give ev to p's app in p's coordinates, if the app takes that kind of event."""
         w = self.wins.get(p.wid) if p.wid is not None else None
-        if not w or not mouse.accepts(mouse.level(w.screen.mode), ev):
+        if not w or not mouse.accepts(mouse.level(w.term.mode), ev):
             return False
         x = min(max(ev.x - p.x, 0), p.w - 1)
         y = min(max(ev.y - p.y, 0), p.text_h - 1)
-        sgr = (mouse.SGR << 5) in w.screen.mode
+        sgr = w.term.mode(mouse.SGR)
         self.to_keeper(proto.pack(proto.DATA, w.wid, mouse.encode(ev, x, y, sgr)))
         return True
 
@@ -851,9 +799,9 @@ class Brain:
         """A full-screen app that doesn't take the mouse (less, man, vim without
         mouse=a) scrolls with arrow keys, as terminals do for the alternate screen."""
         w = self.wins.get(p.wid) if p.wid is not None else None
-        if not w or not w.screen.in_alt or ev.button > 1:
+        if not w or not w.term.in_alt or ev.button > 1:
             return
-        app_keys = (1 << 5) in w.screen.mode       # DECCKM: the app wants ESC O A
+        app_keys = w.term.mode(1)      # DECCKM: the app wants ESC O A
         key = (b"\x1bO" if app_keys else b"\x1b[") + (b"A" if ev.button == 0 else b"B")
         self.to_keeper(proto.pack(proto.DATA, w.wid, key * WHEEL_LINES))
 
@@ -1126,8 +1074,8 @@ class Brain:
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
             self.parse_all(w)
-            return {"ok": True, "lines": w.screen.display,
-                    "cursor": [w.screen.cursor.x, w.screen.cursor.y]}
+            return {"ok": True, "lines": w.term.display, "cursor": list(w.term.cursor),
+                    "engine": w.term.engine}
         if cmd == "new":
             w = await self.spawn(m.get("argv"), m.get("cwd"))
             if m.get("select"):

@@ -13,6 +13,7 @@ release), 4 Shift, 8 Alt, 16 Ctrl, 32 motion, 64 wheel (64 up, 65 down).
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 TRACK = (1000, 1002, 1003)   # press/release, + motion with a button held, + any motion
@@ -67,10 +68,10 @@ def split(data: bytes) -> list[bytes | Event]:
     return out
 
 
-def level(modes: set[int]) -> int:
-    """The app's tracking mode (pyte keeps private mode N as N << 5); 0 = no mouse."""
+def level(mode: Callable[[int], bool]) -> int:
+    """The app's tracking mode, from mode(n) = private mode n is on; 0 = no mouse."""
     for m in reversed(TRACK):
-        if (m << 5) in modes:
+        if mode(m):
             return m
     return 0
 
