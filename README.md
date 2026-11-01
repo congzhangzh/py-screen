@@ -51,9 +51,35 @@ uv run pys reload          # new brain, same shells
 uv run pys kill            # end everything
 ```
 
-Keys (prefix **`C-]`**): `c` new window in the current dir · `n`/Space next · `p`
-previous · `0`–`9` select · `d` detach · `X` kill window · `l` redraw · `R` reload brain ·
-`Q` quit everything · `C-]` a literal `C-]`.
+Keys: the prefix is **`C-a`**, or **`C-]`** when you run `pys` inside GNU screen (`$STY`
+set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFIX`.
+
+| Keys | Action |
+|---|---|
+| `c` / `C-c` | new window in the focused window's directory |
+| `\|` / `-` | split side by side / stacked, with a new window in the same dir |
+| `\` / `_` | empty split side by side / stacked |
+| `h` `j` `k` `l` | move the focus between panes |
+| `r` then `h/l/j/k`, `=` | resize mode (any other key ends it) · `=` equalise panes |
+| `x` / `X` | close the pane (window keeps running) / kill the window |
+| `n` `p` `0`–`9`, `Alt-0`–`Alt-9` | next, previous, select |
+| `Space` or the prefix twice | toggle to the last window |
+| `w` `"` `F2` | window list (`j/k`, arrows, digits, Enter, Esc) |
+| `,` | rename the window |
+| `a` | send a literal prefix |
+| `d` · `C-l` · `R` · `Q` | detach · redraw · reload the brain · quit everything |
+
+### Config
+
+`~/.config/pys/config.py` (plain Python, read on every brain start, so `C-a R` applies an
+edit): status widgets and extra key bindings. See `src/py_screen/config.py` for the helpers.
+
+```python
+WIDGETS = [cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10), load(), clock()]
+BIND = {"T": ("top", ["htop"])}   # C-a T opens a window running htop
+```
+
+The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
 
 Sockets live in `$XDG_RUNTIME_DIR/pys/` (`PYS_DIR` overrides; keep it short: an AF_UNIX
 path is limited to 108 bytes). Server log: `server.log` in that dir.
@@ -67,11 +93,11 @@ uv run python bench/m0_speed.py --work <scratch dir>  # speed vs GNU screen (spe
 
 Results of each run are kept in [`bench/results/`](bench/results/), one file per run.
 
-## Known gaps (M0)
+## Known gaps (M1)
 
-- pyte has no alternate screen: after vim exits, its last screen stays until the shell
-  draws over it.
+- Mouse reporting is passed through only while the focused pane is the top-left one
+  (coordinates aren't translated yet).
 - A hidden window's title in the status line updates only when the window is shown
   (its output isn't parsed until then).
-- No scrollback view, splits, config file or widgets yet (M1/M2).
-- Linux only; the Windows check (pywinpty + named pipes) waits for the rig.
+- No scrollback view yet (M2).
+- Linux (and macOS) only for now; the Windows pieces are checked by the manual CI run.

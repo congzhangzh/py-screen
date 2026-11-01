@@ -57,7 +57,9 @@ async def attach() -> str:
                 break
             cols, rows = size()
             writer.write(proto.pack_ctl({"op": "attach", "cols": cols, "rows": rows,
-                                         "cwd": os.getcwd()}))
+                                         "cwd": os.getcwd(),
+                                         "prefix": os.environ.get("PYS_PREFIX"),
+                                         "in_screen": bool(os.environ.get("STY"))}))
             reason = "lost"
             try:
                 while True:

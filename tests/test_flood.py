@@ -24,7 +24,7 @@ def sess():
 
 def attach(s: Session) -> Term:
     t = Term(PYS + ["attach"], s.env)
-    t.wait_for(" pys │")
+    t.wait_for(" pys ")
     t.wait_for("$ ")
     return t
 
