@@ -77,14 +77,14 @@ HELP = [
 ]
 NO_PREFIX = [
     ("Alt-0 .. Alt-9", "select a window"),
-    ("Alt-Tab / Alt-Shift-Tab", "next / previous window (if the desktop lets them through)"),
+    ("Alt-Tab / Alt-Shift-Tab", "next / previous window, if the desktop passes them"),
     ("F2", "window list"),
 ]
 MOUSE_HELP = [
-    ("click", "focus a pane (the app gets the click too, if it wants the mouse)"),
+    ("click", "focus a pane; mouse apps get the click too"),
     ("click the status line", "select that window"),
     ("drag a border", "resize: a │ separator or a caption line"),
-    ("wheel", "the pane under the pointer; arrow keys for vim, less..."),
+    ("wheel", "scrolls the pane under it; arrows for vim, less..."),
     ("Shift+drag", "select text in your terminal (most terminals)"),
 ]
 
@@ -193,6 +193,9 @@ class Client:
     buf: str = ""
     grab: Pane | None = None      # the pane that got a press: its drag and release follow
     drag: tuple[Split, int] | None = None   # a border being dragged
+    help_hits: dict[tuple[int, int], int] = field(default_factory=dict)  # (row, help column) → wid
+    help_cw: int = 80             # the help's column width, to map a click to its column
+    help_page: int = 0
 
 
 class Brain:
@@ -595,24 +598,81 @@ class Brain:
             out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * self.cols}")
         return "".join(out)
 
-    def help_screen(self, c: Client) -> str:
+    def help_sections(self, c: Client) -> list[list[str]]:
+        """The help as sections: the windows first (what you'd switch to), then the keys."""
+        home = os.path.expanduser("~")
+        wins = [" windows (a digit or a click selects one)"]
+        for wid in self.order:
+            w = self.wins[wid]
+            flag = "*" if wid == self.current else ("-" if wid == self.last else " ")
+            cwd = w.cwd() or ""
+            if home != "/" and (cwd == home or cwd.startswith(home + "/")):
+                cwd = "~" + cwd[len(home):]
+            wins.append(f"   {wid:>2}{flag} {fit(w.name, 20)} {cwd}")
         pfx = "C-" + chr(c.prefix + 0x60) if c.prefix < 0x1B else "C-" + chr(c.prefix + 0x40)
-        rows = [f" py-screen keys: prefix {pfx}, then", ""]
-        rows += [f"   {k:<22} {v}" for k, v in HELP]
+        out = [wins, [f" keys: prefix {pfx}, then"] + [f"   {k:<23} {v}" for k, v in HELP]]
         if self.cfg.bind:
-            rows += ["", " from your config (prefix, then)", ""]
-            rows += [f"   {k:<22} {t}: {' '.join(a)}" for k, (t, a) in self.cfg.bind.items()]
-        rows += ["", " without the prefix", ""]
-        rows += [f"   {k:<22} {v}" for k, v in NO_PREFIX]
+            out.append([" from your config (prefix, then)"]
+                       + [f"   {k:<23} {t}: {' '.join(a)}" for k, (t, a) in self.cfg.bind.items()])
+        out.append([" without the prefix"] + [f"   {k:<23} {v}" for k, v in NO_PREFIX])
         if self.cfg.mouse:
-            rows += ["", " mouse", ""]
-            rows += [f"   {k:<22} {v}" for k, v in MOUSE_HELP]
-        rows += ["", " any key closes this"]
+            out.append([" mouse"] + [f"   {k:<23} {v}" for k, v in MOUSE_HELP])
+        return out
+
+    def help_columns(self, c: Client) -> tuple[list[list[tuple[str, int | None]]], int, int]:
+        """Flow the help sections into columns of the help's height. A section that runs
+        past the bottom continues at the top of the next column under its heading, marked
+        "(more)"; a heading never sits alone at the bottom. Returns the
+        columns, how many fit side by side (only as many as fit without cutting a key's
+        text) and the height. Rows carry the wid of a window row, for digits and clicks."""
+        h = max(1, self.rows - 1 - 3)            # between title + blank and the footer
+        secs = self.help_sections(c)
+        need = max(width(t) for sec in secs[1:] for t in sec) + 2
+        per_page = max(1, min(3, self.cols // need))
+        cols: list[list[tuple[str, int | None]]] = [[]]
+        for i, sec in enumerate(secs):
+            wids: list[int | None] = [None] + list(self.order) if i == 0 else [None] * len(sec)
+            rows = list(zip(sec, wids))
+            if cols[-1] and len(cols[-1]) + 3 > h:
+                cols.append([])                  # no room for the heading and a line
+            elif cols[-1]:
+                cols[-1].append(("", None))
+            cols[-1].append(rows[0])
+            for r in rows[1:]:
+                if len(cols[-1]) >= h:
+                    cols.append([(rows[0][0] + " (more)", None)])
+                cols[-1].append(r)
+        return cols, per_page, h
+
+    def help_pages(self, c: Client) -> int:
+        cols, per_page, _ = self.help_columns(c)
+        return -(-len(cols) // per_page)
+
+    def help_screen(self, c: Client) -> str:
+        cols, per_page, h = self.help_columns(c)
+        pages = -(-len(cols) // per_page)
+        c.help_page %= pages
+        shown = cols[c.help_page * per_page:(c.help_page + 1) * per_page]
+        cw = self.cols // per_page
         area = self.rows - 1
+        c.help_hits, c.help_cw = {}, cw
+        lines = [" py-screen help", ""]
+        for k in range(h):
+            parts = []
+            for j, col in enumerate(shown):
+                text, wid = col[k] if k < len(col) else ("", None)
+                if wid is not None:
+                    c.help_hits[(k + 2, j)] = wid
+                parts.append(fit(text, cw))
+            lines.append("".join(parts))
+        foot = " a digit selects a window · other keys close"
+        if pages > 1:
+            foot = f" page {c.help_page + 1}/{pages} · Space: more ·" + foot
+        lines.append(foot)
         out = []
         for y in range(area):
-            text = rows[y] if y < len(rows) else ""
             attr = "\x1b[0;30;46m" if y == 0 else "\x1b[0m"
+            text = lines[y] if y < len(lines) else ""
             out.append(f"\x1b[{y + 1};1H{attr}{fit(text, self.cols)}\x1b[0m")
         return "".join(out)
 
@@ -798,8 +858,16 @@ class Brain:
 
     def on_mouse(self, c: Client, ev: mouse.Event) -> None:
         if c.mode == "help":
-            if ev.press:
+            if ev.wheel:
+                if not ev.release and self.help_pages(c) > 1:
+                    c.help_page += 1 if ev.button == 1 else -1
+                    c.stale = True
+                    self.schedule_render()
+            elif ev.press:
+                wid = c.help_hits.get((ev.y, ev.x // max(1, c.help_cw)))
                 c.mode, c.stale = None, True
+                if wid is not None:
+                    self.select(wid)
                 self.schedule_render()
             return
         if c.mode == "list":
@@ -943,7 +1011,7 @@ class Brain:
         elif key in ('w', '"'):
             self.open_list(c)
         elif key == "?":
-            c.mode = "help"
+            c.mode, c.help_page = "help", 0
             self.schedule_render()
         elif key == ",":
             c.mode, c.buf = "rename", ""
@@ -974,9 +1042,16 @@ class Brain:
         self.schedule_render()
 
     async def mode_keys(self, c: Client, data: bytes) -> None:
-        if c.mode == "help":                     # any key closes the help
-            c.mode = None
+        if c.mode == "help":                     # Space pages; a digit selects; others close
             c.stale = True
+            if data in (b" ", *DOWN) and self.help_pages(c) > 1:
+                c.help_page += 1
+            elif data in UP and self.help_pages(c) > 1:
+                c.help_page -= 1
+            else:
+                c.mode = None
+                if len(data) == 1 and chr(data[0]).isdigit():
+                    self.select(data[0] - 0x30)
         elif c.mode == "list":
             if data in UP:
                 c.list_idx = max(0, c.list_idx - 1)

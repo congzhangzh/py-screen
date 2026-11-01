@@ -73,7 +73,7 @@ set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFI
 | `Space` or the prefix twice | toggle to the last window |
 | `w` `"` `F2` | window list (`j/k`, arrows, digits, Enter, Esc) |
 | `,` | rename the window |
-| `?` | this list, plus your config's bindings |
+| `?` | help: the windows (a digit or a click selects one), these keys, your config's bindings; Space pages when it does not fit |
 | `a` | send a literal prefix |
 | `d` · `C-l` · `R` · `Q` | detach · redraw · reload the brain · quit everything |
 

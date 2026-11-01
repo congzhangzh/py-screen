@@ -102,10 +102,59 @@ def test_alt_tab_and_help():
         t.send(b"\x1b\x1b[Z")                            # Alt+Shift+Tab
         wait(lambda: cur() == 1)
         t.send(C_RB + "?")
-        t.wait_for("py-screen keys: prefix C-]")
+        t.wait_for("keys: prefix C-], then")
         t.wait_for("Alt-Tab / Alt-Shift-Tab")
         t.send("q")
         t.wait_until(lambda s: "py-screen keys" not in s)
     finally:
         t.close()
         sess.kill()
+
+
+def test_help_lists_the_windows_and_selects_one():
+    sess = Session("m1h")
+    t = Term(PYS + ["attach"], sess.env, 120, 30)
+    try:
+        t.wait_for(" pys ")
+        sess.pys("new")
+        sess.pys("new")
+        cur = lambda: json.loads(sess.pys("ls", "--json"))["current"]
+        t.send(C_RB + "?")
+        t.wait_for("windows (a digit or a click selects one)")
+        t.wait_until(lambda s: all(f"   {i}" in s for i in "012") and "  0*" in s)
+        t.send("2")                                      # a digit selects and closes
+        wait(lambda: cur() == 2)
+        t.wait_until(lambda s: "py-screen help" not in s)
+        t.send(C_RB + "?")
+        t.wait_for("py-screen help")
+        t.send("\x1b[<0;6;5M\x1b[<0;6;5m")               # click the row of window 1
+        wait(lambda: cur() == 1)
+        t.wait_until(lambda s: "py-screen help" not in s)
+    finally:
+        t.close()
+        sess.kill()
+
+
+def test_help_pages_when_it_does_not_fit():
+    sess = Session("m1p")
+    t = Term(PYS + ["attach"], sess.env, 80, 24)
+    try:
+        t.wait_for(" pys ")
+        t.send(C_RB + "?")
+        t.wait_for("page 1/2 · Space: more")
+        t.send(" ")
+        t.wait_for("page 2/2")
+        t.wait_until(lambda s: "without the prefix" in s and " mouse" in s)
+        t.send(" ")                                      # wraps to the first page
+        t.wait_for("page 1/2")
+        t.send("q")
+        t.wait_until(lambda s: "py-screen help" not in s)
+    finally:
+        t.close()
+        sess.kill()
+
+
+def test_help_lines_fit_80_columns():
+    from py_screen import brain
+    for k, v in brain.HELP + brain.NO_PREFIX + brain.MOUSE_HELP:
+        assert len(f"   {k:<23} {v}") < 80, k
