@@ -1234,7 +1234,11 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
     count = CSI_ARG_COUNT(args[0]);
     col = state->pos.col + count;
     UBOUND(col, row_width);
-    while (state->pos.col < col) {
+    if (!state->combine_width)  // no character drawn yet: nothing to repeat (py-screen)
+      break;
+    // py-screen: a wide character is repeated only while it fits; past the row's end
+    // its right half went beyond the row (screen.c putglyph wrote through NULL).
+    while (state->pos.col + state->combine_width <= col) {
       putglyph(state, state->combine_chars, state->combine_width, state->pos);
       state->pos.col += state->combine_width;
     }
