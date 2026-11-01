@@ -230,8 +230,14 @@ and a dropped mode switch breaks input. If it's too slow:
      ground state, scrolling), proven equal to pyte by a differential fuzz test. Floods
      went from 4–6× to about 2× screen's time; Python's cost per line is what is left
      (`bench/results/m1-fastparse-*`).
-   - *Step 2 (open):* native. It removes the per-line cost but adds a compiled
-     dependency to every platform's install; the owner decides.
+   - *Step 2 (2026-11-01, the owner: "go native", libvterm, in the repo):* the `vterm`
+     engine. libvterm 0.3.3 (MIT, Neovim's and Vim's terminal core) is imported flat
+     under `deps/libvterm` with its provenance; its parser and state run unpatched except
+     for three bug fixes the differential test found (REP, margins on resize, cursor
+     restore; `deps/README.md`). Its screen layer moved every row on each line feed, so
+     py-screen keeps its own store (rows as pointers) on libvterm's state layer, tested
+     cell for cell against libvterm's screen layer. Floods: `seq 1 5000000` 1.6 s vs
+     screen's 13.4 s. The extension is optional at install; pyte stays as the fallback.
 
 (v2 had "parse only the tail of a flood" as remedy 1. It made floods 3–4× faster than
 screen and was replaced in v3 for the reason above; the bench results of both are kept in

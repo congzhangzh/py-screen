@@ -43,9 +43,18 @@ feeds and CSI sequences take it from 0.85 to 1.7 MB/s of scrolling text), so:
 - **Keys first.** For 100 ms after a key, only shown windows are parsed: nothing else
   stands between a key and its echo (about 2 ms median while a hidden window floods).
 
-Trade-off: a flood runs at the parser's speed, about 2× GNU screen's time (`seq 1 5000000`
-25 s vs 13 s; numbers in [`bench/results/`](bench/results/)). A native parser is the way
-past that (spec §8.1).
+A flood runs at the parser's speed. With the vterm engine (libvterm, in C) that is faster
+than GNU screen: `seq 1 5000000` takes 1.6 s against screen's 13.4 s, a 50 MB coloured log
+0.9 s against 8.1 s ([`bench/README.md`](bench/README.md) has the history).
+
+**Screen engines.** Each window's screen is a `term.Term`; `PYS_TERM` picks the engine:
+
+| Engine | What | When |
+|---|---|---|
+| `vterm` (default) | [libvterm](deps/README.md)'s parser and state, compiled in, with py-screen's own screen store | When the C extension was built (needs a C compiler at install; release wheels have it) |
+| `pyte` | [pyte](https://github.com/selectel/pyte) with pure-Python fast paths | Always there; about 20× slower on floods |
+
+`PYS_TERM=vterm` makes a missing extension an error instead of a quiet fallback.
 
 A sequence that pyte can't apply (an extra parameter, a `?` where none is defined, an
 unknown erase value) is ignored, as terminals do; the bytes after it are still parsed.

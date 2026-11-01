@@ -21,9 +21,16 @@ Wall times; screen took 12.7–13.5 s (`seq`) and 8.0–8.3 s (`cat`) in every r
 | 11-01 02:14 | `dd0f07b` | Same, the head-of-line fix in place | 4.3 s (0.3×) | 2.1 s (0.3×) | 1.1 / 4.3 ms | [flood-fix 2](results/m1-flood-fix-20261101-0214.md) |
 | 11-01 03:44 | `05c6ead` | **Lossless**: every byte parsed, backpressure instead of dropping (tail parsing left wrong cells in Claude Code's diff-drawn screen) | 59.6 s (4.4×) | 46.0 s (5.5×) | 1.7 / 4.4 ms | [lossless](results/m1-lossless-20261101-0344.md) |
 | 11-01 06:27 | `d4c94c1` | Pure-Python fast paths in the parser, equal to pyte cell for cell | 25.3 s (2.0×) | 14.7 s (1.8×) | 1.9 / 5.9 ms | [fastparse](results/m1-fastparse-20261101-0627.md) |
+| 11-01 09:12 | `62b0753` | **vterm engine**: libvterm's parser and state in C, our own row-pointer store; lossless as before | **1.56 s (0.1×)** | **0.85 s (0.1×)** | 1.4 / 1.8 ms | [vterm-store](results/m1-vterm-store-20261101-0912.md) |
 
 The fast rows of 02:06 and 02:14 were fast because they skipped bytes. That was wrong, not
 quick: the lossless row is the honest baseline, and the work since is about parse speed.
+
+The vterm row parses every byte, as the lossless row does, and is now faster than GNU
+screen itself (screen spends its time drawing each update to its terminal; py-screen draws
+at most 60 frames a second). Checked on a live session: 2 million lines, the capture says
+`engine: vterm` and ends on the right last lines. Idle CPU for 10 windows read 0.10 % in
+this run (0.00 % before); not looked into yet.
 
 ## Screen engines alone (`parse_speed.py`)
 
