@@ -18,7 +18,7 @@ import os, sys, termios, tty
 mode, out = sys.argv[1], sys.argv[2]
 saved = termios.tcgetattr(0)
 tty.setraw(0)
-os.write(1, b"\x1b[?1000h" + (b"\x1b[?1006h" if mode == "sgr" else b"") + b"READY")
+os.write(1, b"\x1b[?1000h" + (b"\x1b[?1006h" if mode == "sgr" else b"") + b"READY-" + mode.encode())
 with open(out, "a") as f:
     while True:
         d = os.read(0, 1024)
@@ -71,13 +71,18 @@ def panes(sess: Session) -> list[dict]:
     return json.loads(sess.pys("ls", "--json"))["panes"]
 
 
-def wait(pred, timeout=5.0):
+def wait(pred, timeout=5.0, what=lambda: ""):
+    """Wait for pred(); on a timeout, say what was seen (what() is called then)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if pred():
             return
         time.sleep(0.05)
-    raise AssertionError("condition not met")
+    raise AssertionError(f"condition not met after {timeout}s: {what()}")
+
+
+def text(path) -> str:
+    return path.read_text() if path.exists() else "<no file>"
 
 
 def test_click_drag_wheel_and_app_coordinates(tmp_path):
@@ -90,32 +95,32 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         t.wait_for(" pys ")
         t.wait_until(lambda s: "\x1b[?1002h" in t.raw.decode(errors="replace"))  # MOUSE default on
         t.send(C_RB + "|")
-        wait(lambda: len(panes(sess)) == 2)
+        wait(lambda: len(panes(sess)) == 2, what=lambda: panes(sess))
         left, right = sorted(panes(sess), key=lambda p: p["x"])
         assert right["focus"]
 
         click(t, 3, 3)                                # click the left pane: it gets the focus
-        wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["focus"])
+        wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["focus"], what=lambda: panes(sess))
 
         sep = left["w"]                               # drag the separator 10 columns left
         t.send(sgr(0, sep, 5) + sgr(32, sep - 5, 5) + sgr(32, sep - 10, 5) + sgr(0, sep - 10, 5, True))
-        wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["w"] == left["w"] - 10)
+        wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["w"] == left["w"] - 10, what=lambda: panes(sess))
         left, right = sorted(panes(sess), key=lambda p: p["x"])
 
         # The right pane runs an app that wants the mouse in SGR form; clicking it
         # focuses it and the app sees its own coordinates (1-based, pane-local).
         sess.pys("send", str(right["wid"]), f"{sys.executable} {app} sgr {log}", "--enter")
-        t.wait_for("READY")
+        t.wait_for("READY-sgr")                       # the app has asked for the mouse
         click(t, right["x"] + 4, 2)
-        wait(lambda: log.exists() and "<0;5;3m" in log.read_text())
+        wait(lambda: "<0;5;3m" in text(log), what=lambda: text(log))
         assert "\\x1b[<0;5;3M" in log.read_text()
         assert next(p for p in panes(sess) if p["focus"])["wid"] == right["wid"]
 
         click(t, 3, 3)                                # back to the left pane...
-        wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["focus"])
+        wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["focus"], what=lambda: panes(sess))
         n = log.read_text().count("\n")
         t.send(sgr(65, right["x"] + 1, 4))            # ...the wheel goes to the pane under it
-        wait(lambda: log.read_text().count("\n") > n)
+        wait(lambda: text(log).count("\n") > n, what=lambda: text(log))
         assert "<65;2;5M" in log.read_text()
         assert sorted(panes(sess), key=lambda p: p["x"])[0]["focus"]   # focus didn't move
 
@@ -123,9 +128,9 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         sess.pys("send", str(right["wid"]), "q")
         log2 = tmp_path / "log2"
         sess.pys("send", str(right["wid"]), f"{sys.executable} {app} x10 {log2}", "--enter")
-        time.sleep(0.5)
-        click(t, right["x"] + 4, 2)
-        wait(lambda: log2.exists() and log2.read_text().count("\n") >= 1)
+        t.wait_for("READY-x10")                       # not a fixed sleep: a slow start
+        click(t, right["x"] + 4, 2)                   # would miss the click (the flake)
+        wait(lambda: text(log2).count("\n") >= 1, what=lambda: text(log2) + "\n" + t.text())
         assert "\\x1b[M %#" in log2.read_text()      # button 0, x 5, y 3, each + 32
 
         # The status line picks a window
@@ -133,7 +138,7 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         t.wait_for(" 2 sh")
         row = t.text().splitlines()[-1]
         click(t, row.index(" 2 ") + 1, 29)
-        wait(lambda: json.loads(sess.pys("ls", "--json"))["current"] == 2)
+        wait(lambda: json.loads(sess.pys("ls", "--json"))["current"] == 2, what=lambda: t.text())
     finally:
         t.close()
         sess.kill()
