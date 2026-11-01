@@ -1,0 +1,48 @@
+name: sanitize
+
+# The vterm engine (src/py_screen/_vterm.c + deps/libvterm) built with ASan + UBSan and
+# fuzzed against libvterm's own screen layer (tools/vterm_fuzz.py). Every release runs a
+# short fuzz (release.yml); this is the long one: nightly, with seeds that move with the
+# date so each night covers new input, and on any branch that changes the C code.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  push:
+    branches-ignore: [main] # main's pushes run it inside release.yml
+    paths: ['deps/**', 'src/py_screen/_vterm.c', 'tools/vterm_*', 'tests/test_vterm.py', 'setup.py']
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: Seeds per mode
+        default: '100000'
+      time:
+        description: Time budget in seconds
+        default: '1800'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - name: Build _vterm with ASan + UBSan, then fuzz
+        env:
+          # a push gets the per-change size, the night and a hand run the long one
+          SEEDS: ${{ inputs.seeds || (github.event_name == 'push' && '3000') || '100000' }}
+          BUDGET: ${{ inputs.time || (github.event_name == 'push' && '600') || '1800' }}
+        run: |
+          uv sync -q
+          py=$(uv run python -c 'import sys; print(sys.executable)')
+          PYTHON=$py tools/vterm_asan.sh "$RUNNER_TEMP/asan"
+          # each day starts at its own seed, so the nightly runs don't repeat each other
+          start=$(( 100000 + $(date -u +%j) * 1000000 ))
+          echo "seeds $SEEDS per mode from $start, at most $BUDGET s"
+          ASAN_OPTIONS=detect_leaks=0:exitcode=3 \
+          UBSAN_OPTIONS=halt_on_error=1:exitcode=4:print_stacktrace=1 \
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" PYTHONPATH="$RUNNER_TEMP/asan" \
+            "$py" tools/vterm_fuzz.py --seeds "$SEEDS" --start "$start" --time "$BUDGET"

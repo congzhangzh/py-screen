@@ -61,17 +61,27 @@ unknown erase value) is ignored, as terminals do; the bytes after it are still p
 
 ## Releases
 
-Rolling releases: every push to `main` that passes the tests and a smoke test of the built
-wheel, on Linux and macOS, is published as `<YYYYMMDD>.<N>` (package version
-`0.1.0.dev<YYYYMMDD><NNN>`), once, never replaced. Pushes that change only docs, specs or
-bench results publish nothing. Install the newest with [uv](https://docs.astral.sh/uv/), which
-fetches Python 3.14 if needed; the [release notes](../../releases/latest) give the wheel's URL:
+Rolling releases: every push to `main` that passes is published as `<YYYYMMDD>.<N>` (package
+version `0.1.0.dev<YYYYMMDD><NNN>`), once, never replaced. Pushes that change only docs, specs
+or bench results publish nothing. A release must pass, in [`release.yml`](.github/workflows/release.yml):
+
+- the suite on Linux and macOS, on both screen engines (vterm and pyte);
+- the vterm engine built with ASan + UBSan and fuzzed against libvterm's own screen
+  (a long run every night, in [`sanitize.yml`](.github/workflows/sanitize.yml));
+- a parse-speed check: vterm's lead over pyte must keep at least half of the newest
+  recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
+- each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
+  engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64.
+
+Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed; the
+[release notes](../../releases/latest) list the wheel for each system:
 
 ```bash
 uv tool install https://github.com/congzhangzh/py-screen/releases/download/<tag>/<wheel>
 ```
 
-Windows joins once its platform layer lands. How it works: [`release.yml`](.github/workflows/release.yml).
+Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one.
+Windows joins once its platform layer lands.
 
 ## Use
 
