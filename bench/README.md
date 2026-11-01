@@ -32,9 +32,11 @@ MB/s at 200×50 (higher is better); the commit is the one measured.
 | When | Commit | Change | `seq`: pyte / vterm | coloured log: pyte / vterm | Result |
 |---|---|---|---|---|---|
 | 11-01 08:41 | `5ebe254` | First vterm engine: libvterm's own screen layer | 1.8 / 1.7 | 4.3 / 20.7 | [libvterm-screen-layer](results/parse-libvterm-screen-layer-20261101-0841.md) |
+| 11-01 09:10 | `7bf9173` | Our own screen store on libvterm's state layer: rows as pointers, a scroll rotates them | 1.8 / **32.0** | 4.2 / **77.9** | [own-store](results/parse-own-store-20261101-0910.md) |
 
 Why `seq` didn't gain: libvterm's screen layer keeps the screen as one flat array of 36-byte
 cells and moves every row on each line feed (`deps/libvterm/src/screen.c`, `getcell` and
 `moverect_internal`), about 350 KB at 200×50. The cost grows with columns × rows (0.19 µs a
-line at 20×5, 4.6 µs at 200×50). The next engine keeps libvterm's parser and state layers
-and replaces only the screen store, with rows as pointers.
+line at 20×5, 4.6 µs at 200×50). The store that replaced it keeps libvterm's parser and
+state layers and holds the rows as pointers: 0.25 µs a line at 200×50, 0.15 µs at 80×24,
+and the size of the screen barely matters any more.
