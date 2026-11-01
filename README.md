@@ -1,8 +1,8 @@
 # py-screen
 
 A terminal workspace of my own, in Python: not a clone of screen or tmux, built for fun,
-made more powerful and improved by daily use. The design is in [`spec/`](spec/); the
-current version is [`spec/spec.v3.md`](spec/spec.v3.md).
+made more powerful and improved by daily use. The design is in [`spec/`](https://github.com/congzhangzh/py-screen/tree/main/spec/); the
+current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
 
 Status: **M1 in progress** (Linux; Windows pieces checked on CI). One server, many windows, attach/detach, hot reload, flood-safe typing.
 
@@ -45,13 +45,13 @@ feeds and CSI sequences take it from 0.85 to 1.7 MB/s of scrolling text), so:
 
 A flood runs at the parser's speed. With the vterm engine (libvterm, in C) that is faster
 than GNU screen: `seq 1 5000000` takes 1.6 s against screen's 13.4 s, a 50 MB coloured log
-0.9 s against 8.1 s ([`bench/README.md`](bench/README.md) has the history).
+0.9 s against 8.1 s ([`bench/README.md`](https://github.com/congzhangzh/py-screen/blob/main/bench/README.md) has the history).
 
 **Screen engines.** Each window's screen is a `term.Term`; `PYS_TERM` picks the engine:
 
 | Engine | What | When |
 |---|---|---|
-| `vterm` (default) | [libvterm](deps/README.md)'s parser and state, compiled in, with py-screen's own screen store | When the C extension was built (needs a C compiler at install; release wheels have it) |
+| `vterm` (default) | [libvterm](https://github.com/congzhangzh/py-screen/blob/main/deps/README.md)'s parser and state, compiled in, with py-screen's own screen store | When the C extension was built (needs a C compiler at install; release wheels have it) |
 | `pyte` | [pyte](https://github.com/selectel/pyte) with pure-Python fast paths | Always there; about 20× slower on floods |
 
 `PYS_TERM=vterm` makes a missing extension an error instead of a quiet fallback.
@@ -61,24 +61,28 @@ unknown erase value) is ignored, as terminals do; the bytes after it are still p
 
 ## Releases
 
-Rolling releases: every push to `main` that passes is published as `<YYYYMMDD>.<N>` (package
-version `0.1.0.dev<YYYYMMDD><NNN>`), once, never replaced. Pushes that change only docs, specs
-or bench results publish nothing. A release must pass, in [`release.yml`](.github/workflows/release.yml):
+Rolling releases: every push to `main` that passes is published as `<YYYYMMDD>.<N>`, the
+version and the tag alike, on [PyPI as `py-screen-mux`](https://pypi.org/project/py-screen-mux/)
+and as a [GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never
+replaced. Pushes that change only docs, specs or bench results publish nothing. A release must pass, in [`release.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/release.yml):
 
 - the suite on Linux and macOS, on both screen engines (vterm and pyte);
 - the vterm engine built with ASan + UBSan and fuzzed against libvterm's own screen
-  (a long run every night, in [`sanitize.yml`](.github/workflows/sanitize.yml));
+  (a long run every night, in [`sanitize.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/sanitize.yml));
 - a parse-speed check: vterm's lead over pyte must keep at least half of the newest
   recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
 - each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
   engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64.
 
-Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed; the
-[release notes](../../releases/latest) list the wheel for each system:
+Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed and picks
+the wheel for your system:
 
 ```bash
-uv tool install https://github.com/congzhangzh/py-screen/releases/download/<tag>/<wheel>
+uv tool install py-screen-mux      # the command is pys
 ```
+
+The package is `py-screen-mux` on PyPI because `py-screen` is too close to an existing
+`pyscreen` there; the import is `py_screen` and the command `pys`.
 
 Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one.
 Windows joins once its platform layer lands.
@@ -162,7 +166,7 @@ uv run pytest -s                                      # M0 done-criteria (spec �
 uv run python bench/m0_speed.py --work <scratch dir>  # speed vs GNU screen (spec §8.1)
 ```
 
-Results of each run are kept in [`bench/results/`](bench/results/), one file per run, and [`bench/README.md`](bench/README.md) tells how the speed evolved, one row per run.
+Results of each run are kept in [`bench/results/`](https://github.com/congzhangzh/py-screen/tree/main/bench/results/), one file per run, and [`bench/README.md`](https://github.com/congzhangzh/py-screen/blob/main/bench/README.md) tells how the speed evolved, one row per run.
 
 ## Known gaps (M1)
 

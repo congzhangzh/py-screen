@@ -1,7 +1,10 @@
 [project]
-name = "py-screen"
+# On PyPI as py-screen-mux: "py-screen" is refused there as too close to the existing
+# "pyscreen" (PyPI compares names without - _ .), and "pys" is taken. The import stays
+# py_screen and the command pys. The version is set by release.yml: <YYYYMMDD>.<N>.
+name = "py-screen-mux"
 version = "0.1.0"
-description = "A terminal workspace of my own"
+description = "py-screen: a terminal workspace (multiplexer) of my own, with the pys command"
 readme = "README.md"
 authors = [
     { name = "Cong Zhang", email = "13283869+congzhangzh@users.noreply.github.com" }
@@ -9,9 +12,23 @@ authors = [
 license = "MIT"
 license-files = ["LICENSE", "deps/libvterm/LICENSE"]
 requires-python = ">=3.14"
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: C",
+    "Topic :: Terminals :: Terminal Emulators/X Terminals",
+]
 dependencies = [
     "pyte>=0.8.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/congzhangzh/py-screen"
+Source = "https://github.com/congzhangzh/py-screen"
+Releases = "https://github.com/congzhangzh/py-screen/releases"
+Issues = "https://github.com/congzhangzh/py-screen/issues"
 
 [project.scripts]
 pys = "py_screen:main"

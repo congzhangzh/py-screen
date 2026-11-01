@@ -1,7 +1,8 @@
 name: release
 
 # Rolling releases (聪哥: "release more, release quick"): every push to main that passes
-# publishes the release <YYYYMMDD>.<N>, unless it changes only docs, specs or bench results,
+# publishes the release <YYYYMMDD>.<N> (the version and the tag alike) on PyPI, as
+# py-screen-mux, and on GitHub, unless it changes only docs, specs or bench results,
 # or its commit is already released. By hand, a dry run of any commit, on any branch, with
 # nothing published, or a release of a main commit:
 #   gh workflow run release.yml -R congzhangzh/py-screen [--ref <branch>] -f ref=<sha> [-f publish=true]
@@ -9,12 +10,15 @@ name: release
 #   test × OS     the suite on each OS, on both screen engines (vterm, pyte)
 #   sanitize      the _vterm extension built with ASan + UBSan, a differential fuzz run
 #   bench         vterm's lead over pyte, on this runner, against the newest recorded run
-#   sdist         the sdist, version 0.1.0.dev<YYYYMMDD><NNN>
+#   sdist         the sdist, version <YYYYMMDD>.<N>
 #   wheels × OS   cibuildwheel builds each OS's wheel *from that sdist*, so the sdist is
 #                 proven complete (libvterm and the licences included)
 #   smoke × OS    `uv tool install` of that OS's wheel, then release/smoke.sh with
 #                 PYS_TERM=vterm, which fails when a wheel lacks the extension
-#   publish       a draft with every file, then the release, which creates the tag
+#   draft         a GitHub draft release with every file (a draft creates no tag)
+#   pypi          the wheels and the sdist to PyPI (Trusted Publishing, environment pypi)
+#   release       the draft published, which creates the tag
+# so a failure before PyPI leaves only a draft, and one after it is finished by a rerun.
 # Windows joins once the platform layer (src/py_screen/platform/) has landed.
 on:
   push:
@@ -121,8 +125,8 @@ jobs:
           fi
           day=$(date -u +%Y%m%d)
           n=$(( $(git ls-remote --tags origin "refs/tags/$day.*" | wc -l) + 1 ))
-          base=$(uv version --short)
-          version=${base%%.dev*}.dev$day$(printf %03d "$n")
+          # the version is the tag: a final release on PyPI, sorted by date
+          version=$day.$n
           echo "release $day.$n: py-screen $version from ${sha:0:12}"
           { echo "tag=$day.$n"; echo "version=$version"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
       - name: Build the sdist
@@ -191,21 +195,25 @@ jobs:
           VERSION: ${{ needs.sdist.outputs.version }}
         run: |
           # uv picks the wheel built for this OS and architecture among all of them
-          uv tool install --python 3.14 --find-links dist "py-screen==$VERSION"
+          uv tool install --python 3.14 --find-links dist "py-screen-mux==$VERSION"
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: Smoke test on the vterm engine
         run: PYS_TERM=vterm release/smoke.sh
 
-  publish:
+
+  draft:
     needs: [sdist, smoke]
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.draft.outputs.skip }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Publish (a draft first, so a failure leaves nothing public)
+      - id: draft
+        name: A draft with every file
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.sdist.outputs.tag }}
@@ -219,6 +227,7 @@ jobs:
             done)
           if [ -n "$old" ]; then
             echo "::notice::${SHA:0:12} is already released as $old; nothing new"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           cd dist
@@ -231,7 +240,11 @@ jobs:
             echo
             echo "**Tested:** the suite on Linux and macOS on both engines (vterm, pyte); the vterm engine under ASan + UBSan (a differential fuzz run); its parse speed against the newest recorded run; then each wheel, installed, on the vterm engine (\`release/smoke.sh\`)."
             echo
-            echo "**Install** (needs [uv](https://docs.astral.sh/uv/); it fetches Python 3.14 if missing), the wheel for your system:"
+            echo "**Install** (needs [uv](https://docs.astral.sh/uv/); it fetches Python 3.14 if missing; the command is \`pys\`):"
+            echo '```'
+            echo "uv tool install py-screen-mux==$VERSION"
+            echo '```'
+            echo "from [PyPI](https://pypi.org/project/py-screen-mux/$VERSION/), which picks the wheel for your system, or one of these files:"
             echo
             echo "| System | Install |"
             echo "|---|---|"
@@ -251,6 +264,40 @@ jobs:
             echo "Published once, never replaced."
           } > ../notes.md
           cat ../notes.md
+          # a draft left by a failed run is replaced, so a rerun starts clean (only a draft:
+          # a published release of this tag would have stopped the run above)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null | grep -qx true; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$SHA" \
             --title "py-screen $VERSION ($TAG)" --notes-file ../notes.md ./*
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  pypi:
+    needs: [sdist, draft]
+    if: needs.draft.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/py-screen-mux/${{ needs.sdist.outputs.version }}/
+    permissions:
+      id-token: write # Trusted Publishing: no token is stored anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # a rerun after a failure past this point finds its files already there
+          skip-existing: true
+
+  release:
+    needs: [sdist, draft, pypi]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft, which creates the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.sdist.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
