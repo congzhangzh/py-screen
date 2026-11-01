@@ -50,6 +50,20 @@ past that (spec §8.1).
 A sequence that pyte can't apply (an extra parameter, a `?` where none is defined, an
 unknown erase value) is ignored, as terminals do; the bytes after it are still parsed.
 
+## Releases
+
+Rolling releases: every push to `main` that passes the tests and a smoke test of the built
+wheel, on Linux and macOS, is published as `<YYYYMMDD>.<N>` (package version
+`0.1.0.dev<YYYYMMDD><NNN>`), once, never replaced. Pushes that change only docs, specs or
+bench results publish nothing. Install the newest with [uv](https://docs.astral.sh/uv/), which
+fetches Python 3.14 if needed; the [release notes](../../releases/latest) give the wheel's URL:
+
+```bash
+uv tool install https://github.com/congzhangzh/py-screen/releases/download/<tag>/<wheel>
+```
+
+Windows joins once its platform layer lands. How it works: [`release.yml`](.github/workflows/release.yml).
+
 ## Use
 
 ```bash

@@ -1,8 +1,10 @@
 name: release
 
-# Picks a commit of main as a release, by hand, once 聪哥 says it is ripe:
-#   gh workflow run release.yml -R congzhangzh/py-screen -f ref=<sha> -f publish=true
-# Without publish (the default) it is a dry run: test, build and smoke, nothing published.
+# Rolling releases (聪哥: "release more, release quick"): every push to main that passes
+# publishes the release <YYYYMMDD>.<N>, unless it changes only docs, specs or bench results,
+# or its commit is already released. By hand, a dry run of any main commit (nothing published),
+# or a release of one:
+#   gh workflow run release.yml -R congzhangzh/py-screen -f ref=<sha> [-f publish=true]
 #
 # 1. test × OS   the test suite on each OS, from that commit
 # 2. build       one pure wheel (py3-none-any) and the sdist, version 0.1.0.dev<YYYYMMDD><NNN>
@@ -11,6 +13,9 @@ name: release
 #                tag; published once, never replaced
 # Windows joins the OS list once the platform layer (src/py_screen/platform/) has landed.
 on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', LICENSE, 'spec/**', 'bench/results/**']
   workflow_dispatch:
     inputs:
       ref:
@@ -25,7 +30,8 @@ permissions:
   contents: write
 
 concurrency:
-  # one release at a time, so each counts <N> from the releases before it
+  # one release at a time, so each counts <N> from the releases before it; a newer push
+  # replaces one still waiting (the newest main is what ships), never one already running
   group: release
 
 jobs:
@@ -106,7 +112,7 @@ jobs:
 
   publish:
     needs: [build, smoke]
-    if: inputs.publish
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -120,6 +126,15 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
           SHA: ${{ needs.build.outputs.sha }}
         run: |
+          # a commit is released once (a release's tag points at its commit)
+          old=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft | not) | .tagName' | while read -r t; do
+              if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$t" --jq .sha)" = "$SHA" ]; then echo "$t"; fi
+            done)
+          if [ -n "$old" ]; then
+            echo "::notice::${SHA:0:12} is already released as $old; nothing new"
+            exit 0
+          fi
           whl=$(cd dist && ls *.whl)
           url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$whl
           # shellcheck disable=SC2016 # the backticks are Markdown
