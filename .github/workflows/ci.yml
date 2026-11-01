@@ -11,3 +11,18 @@ jobs:
       - run: uv python install 3.14
       - run: uv sync
       - run: uv run pytest -s
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - run: uv sync
+      - run: uv run pytest -s
+  windows-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - run: uv run --no-project --python 3.14 --with pyte --with pywinpty python spike/win_check.py
