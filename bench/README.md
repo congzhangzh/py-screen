@@ -22,6 +22,13 @@ Wall times; screen took 12.7–13.5 s (`seq`) and 8.0–8.3 s (`cat`) in every r
 | 11-01 03:44 | `05c6ead` | **Lossless**: every byte parsed, backpressure instead of dropping (tail parsing left wrong cells in Claude Code's diff-drawn screen) | 59.6 s (4.4×) | 46.0 s (5.5×) | 1.7 / 4.4 ms | [lossless](results/m1-lossless-20261101-0344.md) |
 | 11-01 06:27 | `d4c94c1` | Pure-Python fast paths in the parser, equal to pyte cell for cell | 25.3 s (2.0×) | 14.7 s (1.8×) | 1.9 / 5.9 ms | [fastparse](results/m1-fastparse-20261101-0627.md) |
 | 11-01 09:12 | `62b0753` | **vterm engine**: libvterm's parser and state in C, our own row-pointer store; lossless as before | **1.56 s (0.1×)** | **0.85 s (0.1×)** | 1.4 / 1.8 ms | [vterm-store](results/m1-vterm-store-20261101-0912.md) |
+| 11-01 20:03 | `96c8cf8` | **Scrollback**: 5000 rows per window; each row that leaves the screen is copied into a ring (GNU screen here keeps 10000) | 2.41 s (0.2×) | 1.04 s (0.1×) | 1.4 / 1.8 ms | [scrollback](results/m1-scrollback-20261101-2003.md) |
+
+The scrollback row pays for keeping history: about 0.2 µs a line on short lines at
+200×50 (the row is trimmed to its last visible cell, then copied), measured on the engine
+alone as `seq` 32 → ~19.5 MB/s and the coloured log 79 → ~62 MB/s for vterm, pyte
+unchanged (1.7 / 4.0–4.3). With `SCROLLBACK = 0` the engine runs as before. An ASan fuzz
+run overlapped part of this bench, so its times may be a little high.
 
 The fast rows of 02:06 and 02:14 were fast because they skipped bytes. That was wrong, not
 quick: the lossless row is the honest baseline, and the work since is about parse speed.
