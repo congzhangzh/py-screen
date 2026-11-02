@@ -70,11 +70,12 @@ class Term:
         self.pid, self.fd = pid, fd
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self.alive = True
+        self.closing = False
         self.thread = threading.Thread(target=self.pump, daemon=True)
         self.thread.start()
 
     def pump(self) -> None:
-        while True:
+        while not self.closing:
             try:
                 r, _, _ = select.select([self.fd], [], [], 0.5)
                 if not r:
@@ -131,9 +132,18 @@ class Term:
         raise AssertionError("client did not exit")
 
     def close(self) -> None:
+        """Kill the command, stop the pump, then free the pty. In that order: the kernel
+        hands the next open() the lowest free fd number, so a pump still reading
+        self.fd after os.close() reads whatever gets that number next, e.g. the stdout
+        pipe of the test's next `pys ls`, whose JSON then never reaches the test (the
+        test_two_clients flake: exit 0, empty output)."""
+        self.closing = True
         try:
             os.kill(self.pid, signal.SIGKILL)
             os.waitpid(self.pid, 0)
         except (ProcessLookupError, ChildProcessError):
             pass
+        self.thread.join(5)                       # select wakes every 0.5 s at most
+        if self.thread.is_alive():
+            raise RuntimeError("pump thread didn't stop; not closing its fd under it")
         os.close(self.fd)
