@@ -667,9 +667,15 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
 
   if(old_row >= 0 && bufidx == BUFIDX_PRIMARY) {
     /* Push spare lines to scrollback buffer */
-    if(screen->callbacks && screen->callbacks->sb_pushline)
+    if(screen->callbacks && screen->callbacks->sb_pushline) {
+      /* py-screen: sb_pushline_from_row reads screen->buffer, the buffer shown; with
+       * the alternate screen up, that pushed its rows instead of the primary's. */
+      ScreenCell *shown = screen->buffer;
+      screen->buffer = old_buffer;
       for(int row = 0; row <= old_row; row++)
         sb_pushline_from_row(screen, row);
+      screen->buffer = shown;
+    }
     if(active)
       statefields->pos.row -= (old_row + 1);
   }

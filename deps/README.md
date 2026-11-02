@@ -43,6 +43,19 @@ Changes on top of upstream, each its own commit (`git log -- deps/libvterm`):
    of a 5000-seed run). Clamped to the screen now, as xterm restores a cursor. Not
    reported upstream yet.
 
+5. `src/state.c`, `vterm_state_reset` (RIS, `ESC c`, what `reset` sends): it cleared
+   the alternate-screen flag without telling the screen, so the screen (libvterm's, and
+   py-screen's store) went on showing the alternate buffer while the state said primary.
+   Found by tests/test_vterm.py once the scrollback was compared: after a RIS inside
+   `?1049h`, a shrink pushed different rows in the two stores. RIS now leaves the
+   alternate screen through the property, as `DECRST 1049` does. Not reported upstream yet.
+
+6. `src/screen.c`, `resize_buffer`: the rows a shrink pushes to the scrollback were read
+   with `vterm_screen_get_cell`, which reads the buffer shown, so with the alternate
+   screen up it pushed the alternate screen's rows in place of the primary's. It now
+   reads the buffer being resized. This is libvterm's own screen layer, which py-screen
+   uses only as the test reference. Not reported upstream yet.
+
 Nothing else in libvterm is changed; py-screen's own C code reaches libvterm through its
 headers and, for its own resize, the line-info arrays and allocator libvterm's state
 expects a resize callback to replace (as `screen.c` does).
