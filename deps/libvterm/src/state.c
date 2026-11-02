@@ -2104,6 +2104,12 @@ void vterm_state_reset(VTermState *state, int hard)
   state->mode.autowrap        = 1;
   state->mode.insert          = 0;
   state->mode.newline         = 0;
+  /* Leave the alternate screen through the property, as DECRST 1049 does, so the
+   * screen (or the embedder's store) switches back too. py-screen: clearing the
+   * flag alone left the screen showing the alternate buffer while the state said
+   * primary. */
+  if(state->mode.alt_screen)
+    settermprop_bool(state, VTERM_PROP_ALTSCREEN, 0);
   state->mode.alt_screen      = 0;
   state->mode.origin          = 0;
   state->mode.leftrightmargin = 0;
