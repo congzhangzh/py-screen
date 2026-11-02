@@ -155,6 +155,32 @@ included), and output that arrives meanwhile doesn't move the rows you are readi
 key that goes to the app takes the pane back to live. `ESC [ 3 J` (what `clear` sends)
 empties the history. `pys capture --history` prints it.
 
+### Copy mode
+
+Prefix `[` (or prefix `Esc`) puts a cursor on the focused pane, over its history and
+screen, as GNU screen and tmux do; the caption says `[copy back/kept]` and the status line
+lists the keys. The app keeps running, and rows it pushes meanwhile don't move the
+cursor off its text.
+
+| Keys | Do |
+|------|----|
+| `h j k l`, arrows, wheel | move (the view follows the cursor) |
+| `0 ^ $`, `w b` | line start / first word / end, next / previous word |
+| `C-u C-d`, `C-b C-f`, `PgUp PgDn` | half a page, a page |
+| `g G` | the oldest row, the newest row |
+| `/ ?`, `n N` | search down / up (lower case matches any case), again the same / other way; the match is marked yellow |
+| `v` or `Space` | start or drop a selection |
+| `y` or `Enter` | copy the selection (without one, the cursor's row) and leave |
+| `Esc`, `q`, prefix | drop the selection; leave |
+
+A copy is kept for prefix `]`, which types it into the focused window (as a bracketed
+paste when the app asked for one), and is sent to your terminal as OSC 52, which puts it
+on the system clipboard in terminals that allow it (kitty, ghostty, WezTerm, iTerm2,
+Windows Terminal, foot; not GNOME Terminal, and not through a GNU screen or tmux around
+pys). `pys ls --json` says per window whether it is in copy mode, how far it is
+scrolled, how much history it keeps, and which mouse mode (`1000`/`1002`/`1003`, `0` =
+none) and screen (`alt`) its app asked for: an app with a mouse mode gets the wheel itself.
+
 A row costs about 36 bytes per cell up to its last visible one: a window full of
 100-column lines holds ~18 MB at 5000 rows. Keeping rows has a price on floods too: about
 0.2 µs a line (see `bench/README.md`).
@@ -211,8 +237,8 @@ changes, or by hand (`platform` workflow).
   that ring wrapped, older state is gone and full-screen apps get a `SIGWINCH` to repaint.
   Keeping the screens across a planned reload is open.
 - Floods are bounded by pyte's speed (see "Floods").
-- Scrollback is a view only: no copy mode or search yet (select with Shift+drag in your
-  terminal), and a resize doesn't rewrap old rows.
+- The scrollback isn't rewrapped on a resize; copy mode selects character-wise only
+  (no line or block selection), and the paste buffer is lost on a brain reload.
 - Windows: `pys attach` needs a real console (Windows Terminal or conhost, not mintty);
   a new window doesn't inherit the focused window's directory (it isn't read from the
   child yet), and the load widget is empty. The pty harness tests are POSIX-only, so

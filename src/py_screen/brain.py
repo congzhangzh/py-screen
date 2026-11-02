@@ -10,6 +10,7 @@ reload keeps the splits.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -22,6 +23,7 @@ from wcwidth import wcswidth
 
 from . import config as cfgmod
 from . import mouse, platform, proto, term
+from .copymode import Copy
 from .layout import Layout, Pane, Split
 
 FRAME = 1 / 60                   # render at most 60 times a second
@@ -71,6 +73,7 @@ HELP = [
     ("w  \"  F2", "window list (j k, arrows, digits, Enter, Esc)"),
     (",", "rename the window"),
     ("a", "send a literal prefix"),
+    ("[ / ]", "copy mode (/ ? search, v select, y copy, q) / paste"),
     ("?", "this help"),
     ("d / C-l", "detach / redraw"),
     ("R / Q", "reload the brain (shells stay) / quit everything"),
@@ -139,6 +142,7 @@ class Window:
     # so what you are reading stays put while the app writes on.
     scroll: int = 0
     seen: int = 0
+    copy: Copy | None = None     # copy mode on this window (prefix [)
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int,
@@ -181,6 +185,7 @@ class Client:
     cols: int = 80                # this client's terminal; the layout follows the client
     rows: int = 24                # that was active last, the others see a cropped view
     seen: float = 0.0             # when it last attached, resized or typed
+    copy_wid: int | None = None   # the window this client's copy mode is on
 
 
 class Brain:
@@ -207,6 +212,7 @@ class Brain:
         self.last_key = 0.0                      # for KEY_GRACE
         self.parse_next = 0                      # round robin start, so no window starves
         self.redraw: set[int] = set()            # windows whose pane is drawn whole next frame
+        self.paste_buf = ""                      # what copy mode copied last (prefix ] pastes it)
 
     # ---- small helpers ------------------------------------------------------
     @property
@@ -524,7 +530,9 @@ class Brain:
     def caption(self, p: Pane, vc: int | None = None) -> str:
         w = self.wins.get(p.wid) if p.wid is not None else None
         label = f" {p.wid} {w.name} " if w else " (empty) "
-        if w and w.scroll:                        # where the view is in the scrollback
+        if w and w.copy:
+            label += f"[copy {w.scroll}/{w.term.history}] "
+        elif w and w.scroll:                      # where the view is in the scrollback
             label += f"[{w.scroll}/{w.term.history}] "
         rest = f" {w.cwd() or ''} " if w else ""
         focused = p is self.layout.focus
@@ -541,8 +549,12 @@ class Brain:
         out = []
         if w:
             s = w.term
-            out.extend(self.line(s, y, p, vc, w.scroll) for y in range(min(s.lines, p.text_h))
-                       if self.shown(p, y, vc, vr))
+            for y in range(min(s.lines, p.text_h)):
+                if not self.shown(p, y, vc, vr):
+                    continue
+                marked = w.copy.render(y - w.scroll, pw) if w.copy else None
+                out.append(f"\x1b[{p.y + y + 1};{p.x + 1}H{marked}" if marked is not None
+                           else self.line(s, y, p, vc, w.scroll))
         else:
             out.extend(f"\x1b[{p.y + y + 1};{p.x + 1}H\x1b[0m{' ' * pw}" for y in range(p.text_h)
                        if self.shown(p, y, vc, vr))
@@ -561,6 +573,10 @@ class Brain:
         if c and c.mode == "rename":
             return row + "\x1b[0;30;46m" + fit(f" title for window {self.current}: {c.buf}▏",
                                                cols) + "\x1b[0m"
+        if c and c.mode == "copy":
+            w = self.wins.get(c.copy_wid) if c.copy_wid is not None else None
+            if w and w.copy:
+                return row + "\x1b[0;30;46m" + fit(w.copy.status(), cols) + "\x1b[0m"
         if c and c.mode == "resize":
             return row + "\x1b[0;30;46m" + fit(" resize: h/l width, j/k height, = equal, "
                                                "other key ends", cols) + "\x1b[0m"
@@ -718,7 +734,7 @@ class Brain:
                 s = w.term
                 ys = s.take_dirty()
                 self.settle(w)
-                if w.scroll and ys:               # the rows sit lower in a scrolled view
+                if (w.scroll or w.copy) and ys:   # rows sit lower, or carry copy marks
                     self.redraw.add(w.wid)
                 if w.wid in self.redraw:
                     whole.append(p)
@@ -764,7 +780,11 @@ class Brain:
             want = {m for m in SYNC_MODES if s.mode(m)}
             x, y = s.cursor
             cx, cy = min(x, s.columns - 1), min(y, f.text_h - 1)
-            if not fw.scroll:                     # scrolled back: no cursor in the history
+            if fw.copy:                           # copy mode: its cursor, always shown
+                py = fw.copy.y + fw.scroll
+                if 0 <= py < f.text_h:
+                    cursor, show_cursor = (f.x + min(fw.copy.x, f.w - 1), f.y + py), True
+            elif not fw.scroll:                   # scrolled back: no cursor in the history
                 cursor, show_cursor = (f.x + cx, f.y + cy), not s.cursor_hidden
         for c in self.clients:
             if c.writer.is_closing():
@@ -881,7 +901,7 @@ class Brain:
     def send_keys(self, data: bytes) -> None:
         if data and self.current is not None:
             w = self.wins.get(self.current)
-            if w and w.scroll:                    # typing goes back to live
+            if w and w.scroll and not w.copy:     # typing goes back to live
                 w.scroll = 0
                 self.redraw.add(w.wid)
                 self.schedule_render()
@@ -925,6 +945,8 @@ class Brain:
         """Keep a scrolled view on the rows it shows: rows pushed since it was placed
         raise scroll by as many. It goes live when the history it showed is gone (ED 3,
         a full ring) or the app went to the alternate screen, which has no history."""
+        if w.copy:
+            w.copy.sync()
         if not w.scroll:
             return
         t = w.term
@@ -984,6 +1006,11 @@ class Brain:
                 self.select(self.order[ev.y - 1])
             c.stale = True
             self.schedule_render()
+            return
+        if c.mode == "copy":                      # the wheel moves copy mode's cursor
+            w = self.wins.get(c.copy_wid) if c.copy_wid is not None else None
+            if w and w.copy and ev.wheel and ev.button <= 1 and not ev.release:
+                self.copy_keys(c, w, (b"k" if ev.button == 0 else b"j") * WHEEL_LINES)
             return
         if c.mode:                                # rename / resize: keys only
             return
@@ -1112,6 +1139,10 @@ class Brain:
                 self.relayout()
         elif key == "X" and self.current is not None:
             self.to_keeper(proto.pack_ctl({"op": "kill", "wid": self.current}))
+        elif key in ("[", "\x1b"):
+            self.enter_copy(c)
+        elif key == "]":
+            self.paste()
         elif key == "r":
             c.mode = "resize"
             self.mark_all_stale()
@@ -1151,7 +1182,75 @@ class Brain:
         c.list_idx = self.order.index(self.current) if self.current in self.order else 0
         self.schedule_render()
 
+    # ---- copy mode ---------------------------------------------------------------
+    def enter_copy(self, c: Client) -> None:
+        w, p = self.focused_window(), self.layout.focus
+        if not w:
+            return
+        if w.copy is None:
+            self.settle(w)
+            x, y = w.term.cursor
+            if w.scroll:                          # scrolled back: start on the view's last row
+                x, y = 0, p.text_h - 1 - w.scroll
+            w.copy = Copy(w.term, min(y, w.term.lines - 1), x)
+            w.seen = w.term.pushed
+        c.mode, c.copy_wid = "copy", w.wid
+        self.redraw.add(w.wid)
+        self.status_dirty = True
+        self.schedule_render()
+
+    def leave_copy(self, c: Client, w: Window | None) -> None:
+        c.mode, c.copy_wid = None, None
+        if w:
+            w.copy, w.scroll = None, 0
+            self.redraw.add(w.wid)
+        self.status_dirty = True
+        self.schedule_render()
+
+    def copy_keys(self, c: Client, w: Window, data: bytes) -> None:
+        p = self.layout.pane_of(w.wid)
+        if not p or not w.copy:                   # the window left the screen
+            self.leave_copy(c, w)
+            return
+        self.settle(w)
+        what, text = w.copy.keys(data, max(1, p.text_h - 1))
+        if what:
+            if what == "copy":
+                self.copied(text)
+            self.leave_copy(c, w)
+            return
+        w.scroll, w.seen = w.copy.follow(w.scroll, p.text_h), w.term.pushed
+        self.redraw.add(w.wid)
+        self.status_dirty = True
+        self.schedule_render()
+
+    def copied(self, text: str) -> None:
+        """Keep it for prefix ], and hand it to every client's terminal as OSC 52, which
+        terminals that allow it (kitty, ghostty, WezTerm, iTerm2, Windows Terminal, foot)
+        put on the system clipboard; others ignore it."""
+        self.paste_buf = text
+        osc = b"\x1b]52;c;" + base64.b64encode(text.encode()) + b"\x07"
+        for c in self.clients:
+            if not c.writer.is_closing():
+                c.writer.write(proto.pack(proto.DATA, 0, osc))
+
+    def paste(self) -> None:
+        w = self.focused_window()
+        if not w or not self.paste_buf:
+            return
+        data = self.paste_buf.replace("\r\n", "\r").replace("\n", "\r").encode()
+        if w.term.mode(2004):                     # the app asked for bracketed paste
+            data = b"\x1b[200~" + data + b"\x1b[201~"
+        self.send_keys(data)
+
     async def mode_keys(self, c: Client, data: bytes) -> None:
+        if c.mode == "copy":
+            w = self.wins.get(c.copy_wid) if c.copy_wid is not None else None
+            if not w or not w.copy or data == bytes([c.prefix]):
+                self.leave_copy(c, w)
+            else:
+                self.copy_keys(c, w, data)
+            return
         if c.mode == "help":                     # Space pages; a digit selects; others close
             c.stale = True
             if data in (b" ", *DOWN) and self.help_pages(c) > 1:
@@ -1226,8 +1325,10 @@ class Brain:
                     "client_sizes": [[c.cols, c.rows] for c in self.clients],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
                                  "cmd": w.cmd, "cwd": w.cwd(),
-                                 "pending": len(w.pending)} for w in
-                                (self.wins[i] for i in self.order)],
+                                 "pending": len(w.pending), "alt": w.term.in_alt,
+                                 "mouse": mouse.level(w.term.mode), "scroll": w.scroll,
+                                 "history": w.term.history, "copy": w.copy is not None}
+                                for w in (self.wins[i] for i in self.order)],
                     "panes": [{"wid": p.wid, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
                                "focus": p is self.layout.focus} for p in self.layout.panes()]}
         if cmd == "send":
