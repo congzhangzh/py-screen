@@ -47,6 +47,8 @@ def main() -> None:
     s.add_argument("--enter", action="store_true", help="append a carriage return")
     c = sub.add_parser("capture", help="print a window's screen")
     c.add_argument("wid", type=int, nargs="?")
+    c.add_argument("--history", action="store_true", help="the scrollback first, then the screen")
+    c.add_argument("--json", action="store_true")
     n = sub.add_parser("new", help="new window, optionally running a command")
     n.add_argument("--select", action="store_true")
     n.add_argument("argv", nargs=argparse.REMAINDER)
@@ -78,7 +80,8 @@ def main() -> None:
         r = {
             "ls": lambda: rpc(cmd="ls"),
             "send": lambda: rpc(cmd="send", wid=a.wid, text=a.text + ("\r" if a.enter else "")),
-            "capture": lambda: rpc(cmd="capture", **({} if a.wid is None else {"wid": a.wid})),
+            "capture": lambda: rpc(cmd="capture", history=a.history,
+                                   **({} if a.wid is None else {"wid": a.wid})),
             "new": lambda: rpc(cmd="new", argv=[x for x in a.argv if x != "--"] or None,
                                cwd=os.getcwd(), select=a.select),
             "select": lambda: rpc(cmd="select", wid=a.wid),
@@ -89,7 +92,9 @@ def main() -> None:
             for w in r["windows"]:
                 mark = "*" if w["wid"] == r["current"] else " "
                 print(f"{mark}{w['wid']:>3}  {w['name']:<20} {w['cwd'] or ''}")
+        elif a.cmd == "capture" and a.json:
+            print(json.dumps(r))
         elif a.cmd == "capture":
-            print("\n".join(line.rstrip() for line in r["lines"]))
+            print("\n".join(line.rstrip() for line in (r.get("history") or []) + r["lines"]))
         elif a.cmd in ("ls", "new"):
             print(json.dumps(r))

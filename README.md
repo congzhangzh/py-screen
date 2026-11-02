@@ -135,7 +135,7 @@ On by default, like tmux's `mouse on`:
 | click a pane | focus it; its app gets the click too if it asked for the mouse |
 | click a window in the status line | select it |
 | drag a `│` separator or a caption line | resize the panes on both sides |
-| wheel | goes to the pane under the pointer, focused or not; a full-screen app that didn't ask for the mouse (less, man) gets arrow keys |
+| wheel, touch drag | goes to the pane under the pointer, focused or not: an app that asked for the mouse gets it; a full-screen app that didn't (less, man) gets arrow keys; anything else (a shell, Claude Code) scrolls back through its history (see Scrollback) |
 | Shift+drag | select text in your terminal (most terminals; the mouse is pys's otherwise) |
 
 Every report is routed to the pane under the pointer and rewritten in that pane's
@@ -143,6 +143,21 @@ coordinates, in the encoding the app asked for (SGR 1006, or the old X10 form). 
 grabs its pane: the drag and the release go there even if the pointer leaves it.
 `MOUSE = False` in the config gives plain drags back to the terminal; the mouse is then
 pys's only while the focused app asks for it (still translated per pane).
+
+### Scrollback
+
+Each window keeps the rows that scroll off the top of its screen (`SCROLLBACK`, 5000 by
+default; the alternate screen of full-screen apps keeps none, as in xterm). The wheel or a
+touch drag (a phone's terminal sends it as wheel reports), or Shift-PgUp / Shift-PgDn,
+scroll the pane back and forth through them; the caption shows `[rows back/rows kept]`.
+The view is only a view: the app keeps running and drawing (Claude Code's input box
+included), and output that arrives meanwhile doesn't move the rows you are reading. Any
+key that goes to the app takes the pane back to live. `ESC [ 3 J` (what `clear` sends)
+empties the history. `pys capture --history` prints it.
+
+A row costs about 36 bytes per cell up to its last visible one: a window full of
+100-column lines holds ~18 MB at 5000 rows. Keeping rows has a price on floods too: about
+0.2 µs a line (see `bench/README.md`).
 
 ### Config
 
@@ -153,6 +168,7 @@ edit): status widgets and extra key bindings. See `src/py_screen/config.py` for 
 WIDGETS = [cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10), load(), clock()]
 BIND = {"T": ("top", ["htop"])}   # C-a T opens a window running htop
 MOUSE = True                      # False: plain drags select text in the terminal
+SCROLLBACK = 5000                 # rows of history per window; 0 = none
 ```
 
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
@@ -195,7 +211,8 @@ changes, or by hand (`platform` workflow).
   that ring wrapped, older state is gone and full-screen apps get a `SIGWINCH` to repaint.
   Keeping the screens across a planned reload is open.
 - Floods are bounded by pyte's speed (see "Floods").
-- No scrollback view yet (M2).
+- Scrollback is a view only: no copy mode or search yet (select with Shift+drag in your
+  terminal), and a resize doesn't rewrap old rows.
 - Windows: `pys attach` needs a real console (Windows Terminal or conhost, not mintty);
   a new window doesn't inherit the focused window's directory (it isn't read from the
   child yet), and the load widget is empty. The pty harness tests are POSIX-only, so

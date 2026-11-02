@@ -4,7 +4,9 @@ layer (_vterm.ScreenLayerTerm), which shares the parser and state and is upstrea
 Both get the same random byte streams, cut into random reads, sometimes resized, and
 must end every read the same: every row as rendered (text and colours), the cursor,
 the modes, the title. And every row whose rendering changed must be in take_dirty(),
-or the brain would leave it stale on the client.
+or the brain would leave it stale on the client. The scrollback (a small ring, so it
+wraps) is part of the state: screen.c pushes rows through sb_pushline, the store by
+its own rule, and both must keep the same rows.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ def vt_token(r: random.Random) -> bytes:
         return r.choice([b"\x1b[1\"q", b"\x1b[0\"q", b"\x1b[2\"q"])       # DECSCA
     if k < 0.85:
         return f"\x1b[?{r.randint(0, 2)}{r.choice('JK')}".encode()       # DECSED DECSEL
-    return r.choice([b"\x1b#8", b"\x1b#6", b"\x1b#5", b"\x1b[?5h", b"\x1b[?5l", b"\x1bD",
+    return r.choice([b"\x1b[3J", b"\n\n\n", b"\x1b#8", b"\x1b#6", b"\x1b#5", b"\x1b[?5h", b"\x1b[?5l", b"\x1bD",
                      b"\x1bM", b"\x1b[4h", b"\x1b[4l", b"\x1b[?6h", b"\x1b[?6l", b"\x1b[?7l",
                      b"\x1b[?1047h", b"\x1b[?1047l", b"\x1b[48;5;21m", b"\x1b[38;2;1;2;3m",
                      b"\xe6\xbc\xa2\xe5\xad\x97" * 3])
@@ -51,8 +53,9 @@ def stream(r: random.Random, n: int) -> bytes:
 
 
 def state(t) -> tuple:
-    return ([t.row(y, t.columns) for y in range(t.lines)], t.cursor, t.cursor_hidden,
-            t.in_alt, t.title, [t.mode(m) for m in MODES], (t.columns, t.lines))
+    return ([t.row(y, t.columns) for y in range(-t.history, t.lines)], t.cursor,
+            t.cursor_hidden, t.in_alt, t.title, [t.mode(m) for m in MODES],
+            (t.columns, t.lines), t.history, t.pushed)
 
 
 def check_dirty(t, before: list[str]) -> list[str]:
@@ -66,7 +69,8 @@ def check_dirty(t, before: list[str]) -> list[str]:
 def run(seed: int, resizes: bool) -> None:
     r = random.Random(seed)
     cols, rows = r.choice([(10, 4), (20, 6), (7, 3), (80, 24), (13, 9)])
-    a, b = _vterm.Term(cols, rows), _vterm.ScreenLayerTerm(cols, rows)
+    sb = r.choice([0, 1, 5, 40])
+    a, b = _vterm.Term(cols, rows, sb), _vterm.ScreenLayerTerm(cols, rows, sb)
     data = stream(r, r.randint(20, 300))
     seen = check_dirty(a, [])
     i = 0

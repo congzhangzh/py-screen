@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -46,7 +47,8 @@ KEY_GRACE = 0.1                  # after a key, hidden windows wait this long: n
 # The mouse is not mirrored: the brain asks for SGR reports itself and routes
 # each one to the pane under the pointer (see mouse.py and Brain.on_mouse).
 SYNC_MODES = (1, 2004)
-WHEEL_LINES = 3                  # arrow keys per wheel notch for a full-screen app without mouse
+WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
+                                 # full-screen app without mouse
 WIDGET_COLORS = (33, 36, 32, 37)
 
 UP = (b"\x1b[A", b"\x1bOA", b"k")
@@ -54,6 +56,7 @@ DOWN = (b"\x1b[B", b"\x1bOB", b"j")
 F2 = (b"\x1bOQ", b"\x1b[12~")
 ALT_TAB = (b"\x1b\t",)                         # Alt+Tab: ESC prefix + Tab
 ALT_SHIFT_TAB = (b"\x1b\x1b[Z",)               # Alt+Shift+Tab: ESC prefix + back-tab (CSI Z)
+SHIFT_PGUP, SHIFT_PGDN = b"\x1b[5;2~", b"\x1b[6;2~"
 
 HELP = [
     ("c, C-c", "new window in the focused window's directory"),
@@ -76,12 +79,13 @@ NO_PREFIX = [
     ("Alt-0 .. Alt-9", "select a window"),
     ("Alt-Tab / Alt-Shift-Tab", "next / previous window, if the desktop passes them"),
     ("F2", "window list"),
+    ("Shift-PgUp / PgDn", "scroll back / forward; any key goes back to live"),
 ]
 MOUSE_HELP = [
     ("click", "focus a pane; mouse apps get the click too"),
     ("click the status line", "select that window"),
     ("drag a border", "resize: a │ separator or a caption line"),
-    ("wheel", "scrolls the pane under it; arrows for vim, less..."),
+    ("wheel, touch drag", "scroll back the pane under it; arrows for vim, less"),
     ("Shift+drag", "select text in your terminal (most terminals)"),
 ]
 
@@ -129,10 +133,17 @@ class Window:
     pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
     noack: int = 0               # bytes at the front of pending that the keeper replayed:
                                  # it doesn't count them as in flight, so they get no ack
+    # The view of the scrollback: the pane shows the term's rows from -scroll, so scroll
+    # rows of history sit above the screen's top rows. 0 = live. `seen` is term.pushed
+    # when the view was last placed: rows pushed since then raise scroll by as many,
+    # so what you are reading stays put while the app writes on.
+    scroll: int = 0
+    seen: int = 0
 
     @classmethod
-    def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int) -> "Window":
-        return cls(wid, pid, cmd, term.new(cols, rows))
+    def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int,
+            scrollback: int = 0) -> "Window":
+        return cls(wid, pid, cmd, term.new(cols, rows, scrollback))
 
     @property
     def name(self) -> str:
@@ -195,6 +206,7 @@ class Brain:
         self.parse_handle: asyncio.Handle | asyncio.TimerHandle | None = None
         self.last_key = 0.0                      # for KEY_GRACE
         self.parse_next = 0                      # round robin start, so no window starves
+        self.redraw: set[int] = set()            # windows whose pane is drawn whole next frame
 
     # ---- small helpers ------------------------------------------------------
     @property
@@ -262,7 +274,7 @@ class Brain:
             self.remove_window(m["wid"])
 
     def add_window(self, x: dict) -> Window:
-        w = Window.new(x["wid"], x["pid"], x["cmd"], x["cols"], x["rows"])
+        w = Window.new(x["wid"], x["pid"], x["cmd"], x["cols"], x["rows"], self.cfg.scrollback)
         self.wins[w.wid] = w
         self.order.append(w.wid)
         if self.layout.focus.wid is None and len(self.layout.panes()) == 1:
@@ -499,9 +511,10 @@ class Brain:
     def view(self, c: Client | None) -> tuple[int, int]:
         return (c.cols, c.rows) if c else (self.cols, self.rows)
 
-    def line(self, t: term.Term, y: int, p: Pane, vc: int | None = None) -> str:
+    def line(self, t: term.Term, y: int, p: Pane, vc: int | None = None, back: int = 0) -> str:
+        """Pane row y: the term's row y - back (back > 0 reaches into the scrollback)."""
         w = p.w if vc is None else min(p.w, vc - p.x)
-        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y, w)
+        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y - back, w)
 
     @staticmethod
     def shown(p: Pane, y: int, vc: int, vr: int) -> bool:
@@ -511,6 +524,8 @@ class Brain:
     def caption(self, p: Pane, vc: int | None = None) -> str:
         w = self.wins.get(p.wid) if p.wid is not None else None
         label = f" {p.wid} {w.name} " if w else " (empty) "
+        if w and w.scroll:                        # where the view is in the scrollback
+            label += f"[{w.scroll}/{w.term.history}] "
         rest = f" {w.cwd() or ''} " if w else ""
         focused = p is self.layout.focus
         a, b = ("\x1b[0;30;43m", "\x1b[0;33;40m") if focused else ("\x1b[0;37;100m", "\x1b[0;90;40m")
@@ -526,7 +541,7 @@ class Brain:
         out = []
         if w:
             s = w.term
-            out.extend(self.line(s, y, p, vc) for y in range(min(s.lines, p.text_h))
+            out.extend(self.line(s, y, p, vc, w.scroll) for y in range(min(s.lines, p.text_h))
                        if self.shown(p, y, vc, vr))
         else:
             out.extend(f"\x1b[{p.y + y + 1};{p.x + 1}H\x1b[0m{' ' * pw}" for y in range(p.text_h)
@@ -696,14 +711,25 @@ class Brain:
         if not self.clients:
             return                                # parse later, when someone looks
         dirty_rows = []
+        whole: list[Pane] = []                    # panes drawn whole: a scrolled view moved
         for p in self.layout.panes():
             if p.wid in self.wins:
-                s = self.wins[p.wid].term  # type: ignore[index]
-                dirty_rows.append((p, s, sorted(y for y in s.take_dirty() if y < p.text_h)))
+                w = self.wins[p.wid]  # type: ignore[index]
+                s = w.term
+                ys = s.take_dirty()
+                self.settle(w)
+                if w.scroll and ys:               # the rows sit lower in a scrolled view
+                    self.redraw.add(w.wid)
+                if w.wid in self.redraw:
+                    whole.append(p)
+                else:
+                    dirty_rows.append((p, s, sorted(y for y in ys if y < p.text_h)))
+        self.redraw.clear()
         all_panes = self.layout.panes()
         captions = {id(p): self.caption(p) for p in all_panes}
         recaption = [p for p in all_panes if self.captions.get(id(p)) != captions[id(p)]]
         self.captions = captions                  # a title or cwd change redraws its caption
+        whole_panes = whole
         bodies_dirty: dict[tuple[int, int], str] = {}   # one body per view size
         bodies_full: dict[tuple[int, int], str] = {}
 
@@ -714,6 +740,7 @@ class Brain:
                          if whole or self.shown(p, y, vc, vr)]
                 parts.extend(captions[id(p)] if whole else self.caption(p, vc) for p in recaption
                              if whole or self.shown(p, p.h - 1, vc, vr))
+                parts.extend(self.pane_full(p, vc, vr) for p in whole_panes)
                 bodies_dirty[(vc, vr)] = "".join(parts)
             return bodies_dirty[(vc, vr)]
 
@@ -737,7 +764,8 @@ class Brain:
             want = {m for m in SYNC_MODES if s.mode(m)}
             x, y = s.cursor
             cx, cy = min(x, s.columns - 1), min(y, f.text_h - 1)
-            cursor, show_cursor = (f.x + cx, f.y + cy), not s.cursor_hidden
+            if not fw.scroll:                     # scrolled back: no cursor in the history
+                cursor, show_cursor = (f.x + cx, f.y + cy), not s.cursor_hidden
         for c in self.clients:
             if c.writer.is_closing():
                 continue
@@ -852,6 +880,11 @@ class Brain:
 
     def send_keys(self, data: bytes) -> None:
         if data and self.current is not None:
+            w = self.wins.get(self.current)
+            if w and w.scroll:                    # typing goes back to live
+                w.scroll = 0
+                self.redraw.add(w.wid)
+                self.schedule_render()
             self.to_keeper(proto.pack(proto.DATA, self.current, data))
 
     async def keys(self, c: Client, data: bytes) -> None:
@@ -887,14 +920,45 @@ class Brain:
             self.layout.focus = p
             self.relayout()
 
-    def wheel_keys(self, p: Pane, ev: mouse.Event) -> None:
-        """A full-screen app that doesn't take the mouse (less, man, vim without
-        mouse=a) scrolls with arrow keys, as terminals do for the alternate screen."""
+    # ---- scrollback --------------------------------------------------------
+    def settle(self, w: Window) -> None:
+        """Keep a scrolled view on the rows it shows: rows pushed since it was placed
+        raise scroll by as many. It goes live when the history it showed is gone (ED 3,
+        a full ring) or the app went to the alternate screen, which has no history."""
+        if not w.scroll:
+            return
+        t = w.term
+        back = 0 if t.in_alt else min(w.scroll + t.pushed - w.seen, t.history)
+        w.seen = t.pushed
+        if back != w.scroll:
+            w.scroll = back
+            self.redraw.add(w.wid)
+
+    def scroll(self, w: Window, d: int) -> bool:
+        """Move w's view d rows back (d < 0: forward). False if it can't move."""
+        self.settle(w)
+        back = min(max(0, w.scroll + d), 0 if w.term.in_alt else w.term.history)
+        if back == w.scroll:
+            return False
+        w.scroll, w.seen = back, w.term.pushed
+        self.redraw.add(w.wid)
+        self.schedule_render()
+        return True
+
+    def wheel(self, p: Pane, ev: mouse.Event) -> None:
+        """The wheel over a pane whose app doesn't take the mouse: on the primary screen
+        it scrolls the history (a touch drag arrives as wheel reports too); a
+        full-screen app (less, man, vim without mouse=a) gets arrow keys, as
+        terminals do for the alternate screen."""
         w = self.wins.get(p.wid) if p.wid is not None else None
-        if not w or not w.term.in_alt or ev.button > 1:
+        if not w or ev.button > 1 or ev.release:
+            return
+        up = ev.button == 0
+        if not w.term.in_alt:
+            self.scroll(w, WHEEL_LINES if up else -WHEEL_LINES)
             return
         app_keys = w.term.mode(1)      # DECCKM: the app wants ESC O A
-        key = (b"\x1bO" if app_keys else b"\x1b[") + (b"A" if ev.button == 0 else b"B")
+        key = (b"\x1bO" if app_keys else b"\x1b[") + (b"A" if up else b"B")
         self.to_keeper(proto.pack(proto.DATA, w.wid, key * WHEEL_LINES))
 
     def on_mouse(self, c: Client, ev: mouse.Event) -> None:
@@ -943,7 +1007,7 @@ class Brain:
         in_text = p is not None and ev.y < p.y + p.text_h
         if ev.wheel:
             if in_text and not self.to_pane(p, ev):
-                self.wheel_keys(p, ev)
+                self.wheel(p, ev)
             return
         if ev.motion:                             # no button held: focused app only
             if in_text and p is self.layout.focus:
@@ -982,6 +1046,11 @@ class Brain:
         if not c.armed and data in ALT_SHIFT_TAB:
             self.step(-1)
             return
+        fw = self.focused_window()
+        if not c.armed and fw and data in (SHIFT_PGUP, SHIFT_PGDN):
+            page = max(1, self.layout.focus.text_h // 2)
+            if self.scroll(fw, page if data == SHIFT_PGUP else -page):
+                return                            # else the app gets the key
         out = bytearray()
         for b in data:
             if c.armed:
@@ -1167,8 +1236,11 @@ class Brain:
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
             self.parse_all(w)
-            return {"ok": True, "lines": w.term.display, "cursor": list(w.term.cursor),
-                    "engine": w.term.engine}
+            t = w.term
+            history = [re.sub(r"\x1b\[[0-9;]*m", "", t.row(y, t.columns))
+                       for y in range(-t.history, 0)] if m.get("history") else None
+            return {"ok": True, "lines": t.display, "cursor": list(t.cursor),
+                    "engine": t.engine, "history": history, "scroll": w.scroll}
         if cmd == "new":
             w = await self.spawn(m.get("argv"), m.get("cwd"))
             if m.get("select"):

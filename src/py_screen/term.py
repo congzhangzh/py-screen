@@ -2,7 +2,11 @@
 
 The brain needs little from a screen: feed it bytes, resize it, ask which rows changed,
 get a row as text with its colours (ready to send to a client), and read the cursor,
-the private modes, the title and whether the alternate screen is on. Everything about
+the private modes, the title and whether the alternate screen is on. Each engine also
+keeps a scrollback of `scrollback` rows: the rows that scroll off the top of the
+primary screen. row(y) reads them for -history <= y < 0 (-1 = the newest), and
+`pushed` counts every row ever pushed, so a view scrolled back can stay where it is
+while new rows arrive. Everything about
 cells, pens and parser state stays behind this interface, so the engine can change:
 
 - "pyte": screen.Screen + screen.Stream, pure Python, always there.
@@ -30,6 +34,8 @@ class Term(Protocol):
     in_alt: bool
     cursor: tuple[int, int]
     cursor_hidden: bool
+    history: int                  # rows in the scrollback
+    pushed: int                   # rows ever pushed into it
 
     def feed(self, data: bytes) -> None: ...
     def resize(self, lines: int, columns: int) -> None: ...
@@ -81,8 +87,8 @@ def sgr(ch: pyte.screens.Char) -> str:
 class PyteTerm:
     engine = "pyte"
 
-    def __init__(self, columns: int, lines: int) -> None:
-        self.screen = Screen(columns, lines)
+    def __init__(self, columns: int, lines: int, scrollback: int = 0) -> None:
+        self.screen = Screen(columns, lines, scrollback)
         self.stream = Stream(self.screen)
 
     def feed(self, data: bytes) -> None:
@@ -104,8 +110,9 @@ class PyteTerm:
         return d
 
     def row(self, y: int, width: int) -> str:
-        """Row y, cut to width cells, as SGR + text; ends with the attributes reset."""
-        line = self.screen.buffer[y]
+        """Row y, cut to width cells, as SGR + text; ends with the attributes reset.
+        y < 0 is a row of the scrollback."""
+        line = self.screen.history[y] if y < 0 else self.screen.buffer[y]
         out, last = [], None
         for x in range(min(self.screen.columns, width)):
             ch = line[x]
@@ -140,6 +147,14 @@ class PyteTerm:
         return self.screen.cursor.hidden
 
     @property
+    def history(self) -> int:
+        return len(self.screen.history)
+
+    @property
+    def pushed(self) -> int:
+        return self.screen.pushed
+
+    @property
     def display(self) -> list[str]:
         return self.screen.display
 
@@ -163,5 +178,5 @@ def engine() -> str:
     return "vterm" if "vterm" in ENGINES else "pyte"
 
 
-def new(columns: int, lines: int) -> Term:
-    return ENGINES[engine()](columns, lines)
+def new(columns: int, lines: int, scrollback: int = 0) -> Term:
+    return ENGINES[engine()](columns, lines, scrollback)

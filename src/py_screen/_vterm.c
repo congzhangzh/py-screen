@@ -15,7 +15,15 @@
  * that come in; other moves (insert or delete characters, left/right margins) copy
  * cells as libvterm does. Everything else mirrors screen.c, so the two stay equal.
  *
- * libvterm is compiled into this module from the same source tree, unpatched. Three
+ * Scrollback: rows that leave the top of the primary screen go into a ring of `scrollback`
+ * rows, under the rule screen.c uses for sb_pushline (a scroll whose region starts at the
+ * top-left corner and spans the full width, and the rows a shrink drops from the top),
+ * so ScreenLayerTerm, given an sb_pushline that fills the same ring, is still the
+ * reference. row(y) with y < 0 reads it: -1 is the newest row. A row keeps its cells up
+ * to the last one that shows (a character, a background colour or reverse video).
+ *
+ * libvterm is compiled into this module from deps/libvterm (its few fixes are listed in
+ * deps/README.md). Three
  * private modes the brain needs (?1 cursor keys, ?1006 SGR mouse, ?2004 bracketed
  * paste) have no public getter, so mode() reads VTermState through libvterm's internal
  * header. That is safe because both sides are built from the same source in one
@@ -56,6 +64,11 @@ typedef struct {
 } Buffer;
 
 typedef struct {
+    Cell *cells;              /* len cells; past them the row is blank */
+    int len, cap;
+} HistRow;
+
+typedef struct {
     PyObject_HEAD
     VTerm *vt;
     VTermState *state;
@@ -72,6 +85,10 @@ typedef struct {
     int active;
     Pen pen;                  /* the pen new glyphs and erased cells take */
     int global_reverse;       /* DECSCNM */
+    /* the scrollback (both types) */
+    HistRow *hist;            /* a ring of hist_max rows */
+    int hist_max, hist_n, hist_head;   /* hist_head = the oldest row's slot */
+    long long pushed;         /* rows ever pushed: the brain anchors a scrolled view on it */
 } TermObject;
 
 /* ---- shared helpers ------------------------------------------------------------- */
@@ -171,6 +188,94 @@ static inline Pen erased_pen(const TermObject *t)
     return p;
 }
 
+/* ---- the scrollback ------------------------------------------------------------------ */
+
+/* A cell that shows something: a character, a background colour or reverse video.
+ * `reverse` is already resolved against DECSCNM. */
+static inline int shows(const Cell *c, int reverse)
+{
+    return c->chars[0] != 0 || reverse || !VTERM_COLOR_IS_DEFAULT_BG(&c->pen.bg);
+}
+
+/* The next slot of the ring: a new row while it fills, then the oldest row's slot. */
+static HistRow *hist_slot(TermObject *t)
+{
+    if (t->hist_max <= 0)
+        return NULL;
+    if (!t->hist) {
+        t->hist = calloc((size_t)t->hist_max, sizeof(HistRow));
+        if (!t->hist)
+            return NULL;
+    }
+    HistRow *h;
+    if (t->hist_n < t->hist_max)
+        h = &t->hist[(t->hist_head + t->hist_n++) % t->hist_max];
+    else {
+        h = &t->hist[t->hist_head];
+        t->hist_head = (t->hist_head + 1) % t->hist_max;
+    }
+    t->pushed++;
+    return h;
+}
+
+/* Room for n cells in h; 0 when out of memory (the row is then kept empty). */
+static int hist_room(HistRow *h, int n)
+{
+    h->len = 0;
+    if (n <= h->cap)
+        return 1;
+    Cell *c = realloc(h->cells, sizeof(Cell) * (size_t)n);
+    if (!c)
+        return 0;
+    h->cells = c;
+    h->cap = n;
+    return 1;
+}
+
+/* A row of the store leaves the screen. DECSCNM is resolved into each cell, as
+ * screen.c's vterm_screen_get_cell does for the cells it pushes. */
+static void hist_push_row(TermObject *t, const Cell *row)
+{
+    if (t->hist_max <= 0)
+        return;
+    int n = t->cols;
+    while (n > 0 && !shows(&row[n - 1], row[n - 1].pen.reverse ^ t->global_reverse))
+        n--;
+    HistRow *h = hist_slot(t);
+    if (!h || !hist_room(h, n))
+        return;
+    if (n)                            /* a blank row may have no cells allocated yet */
+        memcpy(h->cells, row, sizeof(Cell) * (size_t)n);
+    for (int x = 0; x < n; x++)
+        h->cells[x].pen.reverse ^= t->global_reverse;
+    h->len = n;
+}
+
+static void hist_clear(TermObject *t)
+{
+    t->hist_n = 0;
+    t->hist_head = 0;
+}
+
+static void hist_free(TermObject *t)
+{
+    if (t->hist)
+        for (int i = 0; i < t->hist_max; i++)
+            free(t->hist[i].cells);
+    free(t->hist);
+    t->hist = NULL;
+    t->hist_n = t->hist_head = 0;
+}
+
+/* Row y < 0 of the scrollback (-1 = the newest), or NULL. */
+static const HistRow *hist_row(const TermObject *t, int y)
+{
+    int i = t->hist_n + y;
+    if (y >= 0 || i < 0 || !t->hist)
+        return NULL;
+    return &t->hist[(t->hist_head + i) % t->hist_max];
+}
+
 static int st_putglyph(VTermGlyphInfo *info, VTermPos pos, void *user)
 {
     TermObject *t = user;
@@ -244,6 +349,12 @@ static int st_scrollrect(VTermRect rect, int downward, int rightward, void *user
          * same as vterm_scroll_rect with st_moverect + st_erase, without the copy. */
         Cell **rows = t->buf[t->active].rows;
         int n = abs(downward);
+        /* screen.c moverect_internal: rows scrolled off the top-left corner of the
+         * primary screen go to the scrollback. Only this path can do it: the other
+         * one is never full width, and a scroll of the whole height only erases. */
+        if (downward > 0 && rect.start_row == 0 && t->active == 0)
+            for (int y = 0; y < n; y++)
+                hist_push_row(t, rows[y]);
         Cell *small[64];
         Cell **tmp = n <= 64 ? small : malloc(sizeof(Cell *) * n);
         if (!tmp)
@@ -346,6 +457,9 @@ static void resize_buffer(TermObject *t, int b, Buffer nb, int new_rows, int new
         drop_top = k - bottom;
         keep = new_rows;
     }
+    if (b == 0)                                         /* screen.c: spare lines */
+        for (int y = 0; y < drop_top; y++)
+            hist_push_row(t, old->rows[y]);
     Pen blank = t->pen;                                 /* screen.c clearcell */
     for (int y = 0; y < new_rows; y++) {
         Cell *dst = nb.rows[y];
@@ -427,10 +541,10 @@ static int st_setlineinfo(int row, const VTermLineInfo *newinfo, const VTermLine
 
 static int st_sb_clear(void *user)
 {
-    /* ED 3 (erase the scrollback). No scrollback is kept yet. 0, as screen.c returns
-     * without one: 1 means "handled" and makes on_csi return early, skipping its tail
-     * (the pending-wrap cancel and the cursor update), so the cursor would differ. */
-    (void)user;
+    /* ED 3 (erase the scrollback). Returns 0, as screen.c does: 1 means "handled" and
+     * makes on_csi return early, skipping its tail (the pending-wrap cancel and the
+     * cursor update), so the cursor would differ. */
+    hist_clear(user);
     return 0;
 }
 
@@ -470,16 +584,91 @@ static int sc_resize(int rows, int cols, void *user)
     return 1;
 }
 
+/* The cells screen.c pushes, into the same ring, by the same trimming rule. */
+static int sc_sb_pushline(int cols, const VTermScreenCell *cells, void *user)
+{
+    TermObject *t = user;
+    int n = cols;
+    while (n > 0 && cells[n - 1].chars[0] == 0 && !cells[n - 1].attrs.reverse
+            && VTERM_COLOR_IS_DEFAULT_BG(&cells[n - 1].bg))
+        n--;
+    HistRow *h = hist_slot(t);
+    if (!h || !hist_room(h, n))
+        return 1;
+    for (int x = 0; x < n; x++) {
+        const VTermScreenCell *s = &cells[x];
+        Cell *c = &h->cells[x];
+        memset(c, 0, sizeof *c);
+        for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL && s->chars[i]; i++)
+            c->chars[i] = s->chars[i];
+        c->pen.fg = s->fg;
+        c->pen.bg = s->bg;
+        c->pen.bold = s->attrs.bold;
+        c->pen.underline = s->attrs.underline;
+        c->pen.italic = s->attrs.italic;
+        c->pen.blink = s->attrs.blink;
+        c->pen.reverse = s->attrs.reverse;
+        c->pen.conceal = s->attrs.conceal;
+        c->pen.strike = s->attrs.strike;
+    }
+    h->len = n;
+    return 1;
+}
+
+static int sc_sb_clear(void *user)
+{
+    hist_clear(user);
+    return 0;               /* as st_sb_clear: let the state finish the sequence */
+}
+
 static const VTermScreenCallbacks screen_cbs = {
     .damage = sc_damage,
     .settermprop = sc_settermprop,
     .resize = sc_resize,
+    .sb_pushline = sc_sb_pushline,       /* no sb_popline: a taller screen gets blank rows */
+    .sb_clear = sc_sb_clear,
 };
 
 /* ---- one cell, from either store ------------------------------------------------------ */
 
+static void cell_out(const Cell *c, int width, int reverse, VTermScreenCell *out)
+{
+    for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL; i++) {
+        out->chars[i] = c->chars[i];
+        if (!c->chars[i])
+            break;
+    }
+    out->width = width;
+    memset(&out->attrs, 0, sizeof out->attrs);
+    out->attrs.bold = c->pen.bold;
+    out->attrs.underline = c->pen.underline;
+    out->attrs.italic = c->pen.italic;
+    out->attrs.blink = c->pen.blink;
+    out->attrs.reverse = reverse;
+    out->attrs.conceal = c->pen.conceal;
+    out->attrs.strike = c->pen.strike;
+    out->fg = c->pen.fg;
+    out->bg = c->pen.bg;
+}
+
 static int get_cell(const TermObject *t, int row, int col, VTermScreenCell *out)
 {
+    if (row < 0) {                    /* the scrollback, the same for both types */
+        const HistRow *h = hist_row(t, row);
+        if (!h || col < 0 || col >= t->cols)
+            return 0;
+        if (col >= h->len) {          /* past the row's end: blank, default colours */
+            Cell blank;
+            memset(&blank, 0, sizeof blank);
+            vterm_state_get_default_colors(t->state, &blank.pen.fg, &blank.pen.bg);
+            cell_out(&blank, 1, 0, out);
+            return 1;
+        }
+        const Cell *c = &h->cells[col];
+        int w = (col + 1 < h->len && h->cells[col + 1].chars[0] == CONT) ? 2 : 1;
+        cell_out(c, w, c->pen.reverse, out);
+        return 1;
+    }
     if (t->screen) {
         VTermPos pos = {.row = row, .col = col};
         return vterm_screen_get_cell(t->screen, pos, out);
@@ -488,22 +677,8 @@ static int get_cell(const TermObject *t, int row, int col, VTermScreenCell *out)
         return 0;
     Cell *const *rows = t->buf[t->active].rows;
     const Cell *c = &rows[row][col];
-    for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL; i++) {
-        out->chars[i] = c->chars[i];
-        if (!c->chars[i])
-            break;
-    }
-    out->width = (col + 1 < t->cols && rows[row][col + 1].chars[0] == CONT) ? 2 : 1;
-    memset(&out->attrs, 0, sizeof out->attrs);
-    out->attrs.bold = c->pen.bold;
-    out->attrs.underline = c->pen.underline;
-    out->attrs.italic = c->pen.italic;
-    out->attrs.blink = c->pen.blink;
-    out->attrs.reverse = c->pen.reverse ^ t->global_reverse;
-    out->attrs.conceal = c->pen.conceal;
-    out->attrs.strike = c->pen.strike;
-    out->fg = c->pen.fg;
-    out->bg = c->pen.bg;
+    int w = (col + 1 < t->cols && rows[row][col + 1].chars[0] == CONT) ? 2 : 1;
+    cell_out(c, w, c->pen.reverse ^ t->global_reverse, out);
     return 1;
 }
 
@@ -511,11 +686,16 @@ static int get_cell(const TermObject *t, int row, int col, VTermScreenCell *out)
 
 static int init_common(TermObject *self, PyObject *args, PyObject *kw, int *cols, int *rows)
 {
-    static char *names[] = {"columns", "lines", NULL};
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "ii", names, cols, rows))
+    static char *names[] = {"columns", "lines", "scrollback", NULL};
+    int scrollback = 0;
+    if (!PyArg_ParseTupleAndKeywords(args, kw, "ii|i", names, cols, rows, &scrollback))
         return -1;
     if (*cols < 1 || *rows < 1) {
         PyErr_SetString(PyExc_ValueError, "columns and lines must be at least 1");
+        return -1;
+    }
+    if (scrollback < 0) {
+        PyErr_SetString(PyExc_ValueError, "scrollback must be at least 0");
         return -1;
     }
     if (self->vt) {
@@ -533,6 +713,7 @@ static int init_common(TermObject *self, PyObject *args, PyObject *kw, int *cols
     }
     self->rows = *rows;
     self->cols = *cols;
+    self->hist_max = scrollback;      /* the ring itself comes with the first row */
     vterm_set_utf8(self->vt, 1);
     vterm_output_set_callback(self->vt, cb_output, self);
     self->state = vterm_obtain_state(self->vt);
@@ -573,6 +754,7 @@ static void Term_dealloc(TermObject *self)
         vterm_free(self->vt);
     buffer_free(&self->buf[0]);
     buffer_free(&self->buf[1]);
+    hist_free(self);
     free(self->dirty);
     free(self->title);
     free(self->title_next);
@@ -731,7 +913,7 @@ static PyObject *render(TermObject *self, int y, int width, int pens)
         width = self->cols;
     VTermScreenCell cell, last;
     int have_last = 0;
-    if (y >= 0 && y < self->rows) {
+    if (y >= -self->hist_n && y < self->rows) {
         for (int x = 0; x < width;) {
             if (!get_cell(self, y, x, &cell))
                 break;
@@ -851,13 +1033,24 @@ static PyObject *Term_get_lines(TermObject *self, void *closure)
     return PyLong_FromLong(self->rows);
 }
 
+static PyObject *Term_get_history(TermObject *self, void *closure)
+{
+    return PyLong_FromLong(self->hist_n);
+}
+
+static PyObject *Term_get_pushed(TermObject *self, void *closure)
+{
+    return PyLong_FromLongLong(self->pushed);
+}
+
 static PyMethodDef Term_methods[] = {
     {"feed", (PyCFunction)Term_feed, METH_O, "Parse bytes the app wrote."},
     {"resize", (PyCFunction)Term_resize, METH_VARARGS, "resize(lines, columns)"},
     {"take_dirty", (PyCFunction)Term_take_dirty, METH_NOARGS,
      "The rows changed since the last call, as a set; clears them."},
     {"row", (PyCFunction)Term_row, METH_VARARGS,
-     "row(y, width): row y in exactly width cells, as SGR + text, ending in a reset."},
+     "row(y, width): row y in exactly width cells, as SGR + text, ending in a reset;\n"
+     "y < 0 reads the scrollback (-1 = the newest row)."},
     {"mode", (PyCFunction)Term_mode, METH_O, "mode(n): private mode n (DECSET n) is on."},
     {NULL}
 };
@@ -870,6 +1063,10 @@ static PyGetSetDef Term_getset[] = {
     {"title", (getter)Term_get_title, NULL, "The app's window title (OSC 0 / 2).", NULL},
     {"columns", (getter)Term_get_columns, NULL, NULL, NULL},
     {"lines", (getter)Term_get_lines, NULL, NULL, NULL},
+    {"history", (getter)Term_get_history, NULL,
+     "Rows in the scrollback: row(y, width) reads them for -history <= y < 0.", NULL},
+    {"pushed", (getter)Term_get_pushed, NULL,
+     "Rows ever pushed into the scrollback (it counts on when the ring is full).", NULL},
     {NULL}
 };
 
@@ -878,7 +1075,8 @@ static PyTypeObject TermType = {
     .tp_name = "py_screen._vterm.Term",
     .tp_basicsize = sizeof(TermObject),
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_doc = "A screen: libvterm's parser and state, py-screen's store. Term(columns, lines).",
+    .tp_doc = "A screen: libvterm's parser and state, py-screen's store.\n"
+              "Term(columns, lines, scrollback=0).",
     .tp_new = PyType_GenericNew,
     .tp_init = (initproc)Term_init,
     .tp_dealloc = (destructor)Term_dealloc,
@@ -891,7 +1089,8 @@ static PyTypeObject ScreenLayerType = {
     .tp_name = "py_screen._vterm.ScreenLayerTerm",
     .tp_basicsize = sizeof(TermObject),
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_doc = "libvterm's own screen layer, the reference for tests. ScreenLayerTerm(columns, lines).",
+    .tp_doc = "libvterm's own screen layer, the reference for tests.\n"
+              "ScreenLayerTerm(columns, lines, scrollback=0).",
     .tp_new = PyType_GenericNew,
     .tp_init = (initproc)ScreenLayer_init,
     .tp_dealloc = (destructor)Term_dealloc,

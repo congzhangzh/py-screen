@@ -4,6 +4,10 @@ The alternate screen: full-screen apps (vim, less, Claude) switch to it with pri
 mode 1049 (or 47 / 1047) and switch back on exit, expecting the shell's screen to
 come back as it was. pyte ignores those modes, so vim's last frame used to stay.
 
+Scrollback: a line that a line feed scrolls off the top of the primary screen (the
+region starts at the top row), or that a shrink drops from the top, goes into
+`history`, a deque of at most `scrollback` lines; ED 3 empties it. pyte has none.
+
 Speed: every byte of every window is parsed (the screen model is lossless), so the
 parser's speed is the flood speed. pyte spends its time in two places: draw() makes
 one namedtuple per character, and the stream sends every control character and
@@ -18,6 +22,7 @@ from __future__ import annotations
 import copy
 import inspect
 import re
+from collections import deque
 
 import pyte
 from pyte import charsets as cs
@@ -73,9 +78,11 @@ class _Cells(dict):
 
 
 class Screen(pyte.Screen):
-    def __init__(self, columns: int, lines: int) -> None:
-        super().__init__(columns, lines)
+    def __init__(self, columns: int, lines: int, scrollback: int = 0) -> None:
         self._saved: tuple[dict, pyte.screens.Cursor] | None = None
+        self.history: deque = deque(maxlen=max(0, scrollback))
+        self.pushed = 0                       # lines ever pushed (counts on when full)
+        super().__init__(columns, lines)
         self._cells: dict[pyte.screens.Char, _Cells] = {}
         Char = pyte.screens.Char
         self._blanks = {r: Char(data=" ", fg="default", bg="default", reverse=r)
@@ -96,6 +103,8 @@ class Screen(pyte.Screen):
             return self.cursor_down()
         self.dirty.update(range(self.lines))
         buf = self.buffer
+        if top == 0 and self._saved is None:
+            self._push(buf[0])                # the update below drops it from the buffer
         buf.update(zip(range(top, bottom), map(buf.__getitem__, range(top + 1, bottom + 1))))
         buf.pop(bottom, None)
 
@@ -147,6 +156,17 @@ class Screen(pyte.Screen):
             i += take
         self.dirty.add(cur.y)
 
+    def _push(self, line: dict) -> None:
+        if self.history.maxlen:
+            self.history.append(line)
+            self.pushed += 1
+
+    def reset(self) -> None:
+        """RIS also leaves the alternate screen, as xterm does; the shell's lines it
+        saved are gone (RIS clears the screen anyway)."""
+        self._saved = None
+        super().reset()
+
     @property
     def in_alt(self) -> bool:
         return self._saved is not None
@@ -180,6 +200,8 @@ class Screen(pyte.Screen):
             super().erase_in_line(how, private)
 
     def erase_in_display(self, how: int = 0, *args, **kwargs) -> None:
+        if how == 3:
+            self.history.clear()
         if how in (0, 1, 2, 3):
             super().erase_in_display(how, *args, **kwargs)
 
@@ -199,6 +221,9 @@ class Screen(pyte.Screen):
             super().report_device_status(mode)
 
     def resize(self, lines: int | None = None, columns: int | None = None) -> None:
+        if lines and lines < self.lines and self._saved is None:
+            for y in range(self.lines - lines):   # pyte drops these from the top
+                self._push(self.buffer.pop(y, None) or self._new_line())
         super().resize(lines, columns)
         self.dirty.update(range(self.lines))
 

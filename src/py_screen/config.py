@@ -16,6 +16,8 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
                                               # False: the mouse is pys's only while the
                                               # focused app asks for it, so plain drags
                                               # select text in the terminal again
+    SCROLLBACK = 5000                         # rows of history per window (the wheel and
+                                              # Shift-PgUp scroll it); 0 = none
 """
 
 from __future__ import annotations
@@ -97,6 +99,9 @@ def clock(fmt: str = "%m-%d %H:%M") -> Clock:
     return Clock(every=1.0, fmt=fmt)
 
 
+SCROLLBACK = 5000      # rows a window keeps; a row costs ~36 bytes per cell it shows
+
+
 @dataclass
 class Config:
     widgets: list[Widget]
@@ -104,6 +109,7 @@ class Config:
     prefix: str | None
     error: str | None = None
     mouse: bool = True
+    scrollback: int = SCROLLBACK
 
 
 def default() -> Config:
@@ -134,6 +140,10 @@ def load_config() -> Config:
     cfg.bind = {k: (v[0], list(v[1])) for k, v in ns.get("BIND", {}).items()}
     cfg.prefix = ns.get("PREFIX")
     cfg.mouse = bool(ns.get("MOUSE", True))
+    try:
+        cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
+    except (TypeError, ValueError):
+        cfg.error = "config error: SCROLLBACK"
     return cfg
 
 
