@@ -807,8 +807,14 @@ class Brain:
             if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - 1:
                 cur = f"\x1b[{cursor[1] + 1};{cursor[0] + 1}H" + ("\x1b[?25h" if show_cursor else "")
             mw = overlay_mouse if overlay else want | mouse_want
-            modes_s = "".join(f"\x1b[?{m}h" for m in mw - c.modes)
-            modes_s += "".join(f"\x1b[?{m}l" for m in c.modes - mw)
+            # Resets before sets. Mouse tracking 1000 / 1002 / 1003 is one setting in
+            # xterm and the terminals that copy it (xterm.js, hterm: most phone apps):
+            # resetting any of them turns tracking off, whichever is on. Going from 1002
+            # to 1003 (a window whose app takes every motion, like Claude Code) as
+            # "?1003h ?1002l" left the mouse off, and the terminal then turned a wheel
+            # or a touch drag into arrow keys until the next attach.
+            modes_s = "".join(f"\x1b[?{m}l" for m in sorted(c.modes - mw))
+            modes_s += "".join(f"\x1b[?{m}h" for m in sorted(mw - c.modes))
             c.modes = mw
             # ?7l: no autowrap in the client's terminal while attached (the client turns
             # it back on when it leaves). Every row is placed with CUP, so pys never

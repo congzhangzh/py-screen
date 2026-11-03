@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 
@@ -139,6 +140,40 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         row = t.text().splitlines()[-1]
         click(t, row.index(" 2 ") + 1, 29)
         wait(lambda: json.loads(sess.pys("ls", "--json"))["current"] == 2, what=lambda: t.text())
+    finally:
+        t.close()
+        sess.kill()
+
+
+def tracking(raw: bytes) -> int:
+    """The mouse tracking an xterm-like terminal is left in after reading raw. 1000 /
+    1002 / 1003 are one setting there: a set picks it, a reset of any of them clears it."""
+    lvl = 0
+    for m in re.finditer(rb"\x1b\[\?([\d;]+)([hl])", raw):
+        for n in map(int, m[1].split(b";")):
+            if n in mouse.TRACK:
+                lvl = n if m[2] == b"h" else 0
+    return lvl
+
+
+def test_outer_tracking_follows_the_window():
+    """Switching to a window whose app takes every motion (Claude Code: 1003), opening
+    help (1000) and coming back must leave the outer terminal tracking, not off: a phone
+    terminal with tracking off turns a touch drag into arrow keys."""
+    sess = Session("mouse-modes")
+    t = Term(PYS + ["attach"], sess.env, 100, 24)
+    try:
+        t.wait_for(" pys ")
+        t.wait_until(lambda s: tracking(bytes(t.raw)) == 1002)       # MOUSE default on
+        sess.pys("new", "--select", "--", "sh", "-c", r"printf '\033[?1003hANYMOTION'; sleep 60")
+        t.wait_for("ANYMOTION")
+        wait(lambda: tracking(bytes(t.raw)) == 1003, what=lambda: bytes(t.raw)[-300:])
+        t.send(C_RB + "?")                                           # help: clicks only
+        wait(lambda: tracking(bytes(t.raw)) == 1000, what=lambda: bytes(t.raw)[-300:])
+        t.send("x")                                                  # any other key closes it
+        wait(lambda: tracking(bytes(t.raw)) == 1003, what=lambda: bytes(t.raw)[-300:])
+        sess.pys("select", "0")                                      # the plain shell again
+        wait(lambda: tracking(bytes(t.raw)) == 1002, what=lambda: bytes(t.raw)[-300:])
     finally:
         t.close()
         sess.kill()
