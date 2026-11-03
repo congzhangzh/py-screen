@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 
 import pytest
 
@@ -119,6 +120,75 @@ def test_copy_mode_end_to_end_and_ls_modes():
         t.send(C_RB + "]")                                   # paste: the shell runs 123; 124
         t.wait_for("123: not found")                         # is typed, not run (no newline
         t.send("\x15")                                      # after it), as a terminal pastes
+    finally:
+        t.close()
+        sess.kill()
+
+
+# ---- copy mode is frozen: the app runs on, its output shows when copy mode ends ----
+
+def test_alternate_screen_redrawn_in_place_stays_frozen():
+    for eng in sorted(term.ENGINES):
+        t = term.ENGINES[eng](20, 5, 100)
+        t.feed(b"\x1b[?1049h\x1b[Hhello\r\nworld")
+        c = Copy(t, 0)
+        t.feed(b"\x1b[H\x1b[2JREDRAWN")              # the app repaints, as Claude Code does
+        assert "".join(c.row(0)).startswith("hello"), eng
+        assert "REDRAWN" not in "".join(c.t.row(y, 20) for y in range(5)), eng
+        assert c.keys(b"vj$y", 4) == ("copy", "hello\nworld"), eng
+        assert "REDRAWN" in t.row(0, 20), eng        # the live term ran on
+
+
+def test_primary_screen_freezes_while_rows_scroll_on(numbers):
+    c = Copy(numbers, 0)                              # on "27"
+    numbers.feed(b"".join(f"{i}\r\n".encode() for i in range(31, 41)))  # 10 rows pushed
+    assert c.t.history == 26                          # the start's 26 rows, still in the ring
+    assert "".join(c.row(0)).startswith("27") and "".join(c.row(-1)).startswith("26")
+    c.keys(b"g", 4)
+    assert c.y == -26 and c.row(-26)[:1] == ["1"]
+    c.keys(b"G", 4)
+    assert c.y == 4                                   # the start's last row, not the live one
+
+
+def test_rows_the_ring_drops_leave_the_frozen_history():
+    for eng in sorted(term.ENGINES):
+        t = term.ENGINES[eng](20, 5, 26)              # the ring is full after seq 1 30
+        t.feed(b"".join(f"{i}\r\n".encode() for i in range(1, 31)))
+        c = Copy(t, 0)
+        c.keys(b"g", 4)                               # on "1"
+        t.feed(b"31\r\n32\r\n")                       # the ring drops "1" and "2"
+        c.keys(b"", 4)
+        assert c.t.history == 24 and c.y == -24, eng
+        assert c.row(-24)[:1] == ["3"], eng
+
+
+def test_crop_keeps_colour_and_never_splits_a_wide_character():
+    from py_screen.copymode import crop
+    assert crop("\x1b[31mab\x1b[0m", 4) == "\x1b[31mab\x1b[0m\x1b[0m  "
+    assert crop("a中b", 2) == "a\x1b[0m "            # 中 takes 2 cells: it doesn't fit
+
+
+def test_copy_mode_freezes_an_app_that_redraws_end_to_end():
+    sess = Session("copy-freeze")
+    t = Term(PYS + ["attach"], sess.env, 80, 24)
+
+    def tick() -> int:
+        row = t.text().splitlines()[0]
+        return int(row.split()[1]) if row.startswith("TICK ") else -1
+
+    try:
+        t.wait_for(" pys ")
+        loop = r"""printf '\033[?1049h'; i=0; while :; do i=$((i+1)); printf '\033[HTICK %d ' $i; sleep 0.05; done"""
+        sess.pys("send", "0", loop, "--enter")
+        t.wait_until(lambda s: tick() >= 3)
+        t.send(C_RB + "[")                                   # copy mode
+        t.wait_until(lambda s: "[copy" in s.splitlines()[22])
+        n = tick()
+        time.sleep(0.6)                                      # ~12 more ticks go by
+        assert tick() == n                                   # ...but none shows
+        assert ls(sess)["windows"][0]["copy"]
+        t.send("q")                                          # leave: live again
+        t.wait_until(lambda s: "[copy" not in s.splitlines()[22] and tick() > n + 5)
     finally:
         t.close()
         sess.kill()

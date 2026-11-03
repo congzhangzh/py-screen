@@ -11,11 +11,16 @@ Prefix [ starts it on the focused pane, like GNU screen and tmux. The keys are v
     y, Enter             copy the selection (or the cursor's row) and leave
     Esc                  drop the selection, or leave     q, prefix   leave
 
+Copy mode shows the window as it was when it started (Frozen), as GNU screen and tmux do.
+The app runs on and its output is parsed into the live term, but nothing of it shows
+until copy mode ends: an app that redraws in place (Claude Code's fullscreen mode, a
+spinner, top) would otherwise change the text under the cursor and the selection.
+
 Rows are addressed as the term addresses them: y >= 0 is the screen, y < 0 the scrollback
-(-1 = the newest row there). While the app writes on, rows move into the scrollback and
-their numbers drop; sync() moves the cursor, the selection and a search hit with them, by
-how far `term.pushed` went, so they stay on the same text (the brain's view does the
-same with Window.scroll).
+(-1 = the newest row there), all as of the start. The screen is a snapshot (one screen of
+strings); a scrollback row is read from the live ring, past the rows pushed since (they
+were screen rows of the snapshot), so the history costs nothing to freeze. A row the ring
+dropped meanwhile (ED 3, a full ring) is gone, and the top moves down to match.
 
 This module knows nothing about panes, clients or frames: the brain feeds it keys and
 asks it where the cursor is, what to show and what was copied.
@@ -57,10 +62,60 @@ def cells(text: str) -> list[str]:
     return out
 
 
+CSI = re.compile(r"\x1b\[[0-9;:?]*[ -/]*[@-~]")
+
+
+def crop(row: str, n: int) -> str:
+    """A row as Term.row gives it (SGR + text), cut or padded to exactly n cells."""
+    out: list[str] = []
+    w = i = 0
+    while i < len(row):
+        m = CSI.match(row, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            continue
+        cw = max(wcwidth(row[i]), 0)
+        if w + cw > n:                         # a wide character that doesn't fit
+            break
+        out.append(row[i])
+        w += cw
+        i += 1
+    out.append("\x1b[0m" + " " * (n - w))
+    return "".join(out)
+
+
+class Frozen:
+    """A term's rows as they were when copy mode started; the term itself runs on."""
+
+    def __init__(self, term: Term) -> None:
+        self.live = term
+        self.columns, self.lines = term.columns, term.lines
+        self.in_alt = term.in_alt
+        self.pushed = term.pushed
+        self.kept = term.history
+        self.screen = [term.row(y, term.columns) for y in range(term.lines)]
+
+    @property
+    def history(self) -> int:
+        """Scrollback rows of the start that the live ring still holds."""
+        if self.in_alt:
+            return 0
+        d = self.live.pushed - self.pushed
+        return max(0, min(self.kept, self.live.history - d))
+
+    def row(self, y: int, width: int) -> str:
+        """Row y, exactly width cells; blank past the snapshot's edges."""
+        if 0 <= y < self.lines:
+            return crop(self.screen[y], width)
+        if y < 0 and -y <= self.history:
+            return crop(self.live.row(y - (self.live.pushed - self.pushed), width), width)
+        return "\x1b[0m" + " " * width
+
+
 class Copy:
     def __init__(self, term: Term, y: int, x: int = 0) -> None:
-        self.t = term
-        self.pushed = term.pushed
+        self.t = Frozen(term)
         self.y, self.x = y, x
         self.mark: tuple[int, int] | None = None
         self.hit: tuple[int, int, int] | None = None      # (y, x0, x1) of the last match
@@ -93,15 +148,8 @@ class Copy:
         return n
 
     def sync(self) -> None:
-        """Rows the app pushed since the last call: everything moves up by as many."""
-        d = self.t.pushed - self.pushed
-        self.pushed = self.t.pushed
-        if d:
-            self.y -= d
-            if self.mark:
-                self.mark = (self.mark[0] - d, self.mark[1])
-            if self.hit:
-                self.hit = (self.hit[0] - d, self.hit[1], self.hit[2])
+        """The view is frozen, so nothing moves; only the top can come down, when the
+        live ring drops rows of the start."""
         self.clamp()
 
     def clamp(self) -> None:

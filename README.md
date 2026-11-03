@@ -159,8 +159,12 @@ empties the history. `pys capture --history` prints it.
 
 Prefix `[` (or prefix `Esc`) puts a cursor on the focused pane, over its history and
 screen, as GNU screen and tmux do; the caption says `[copy back/kept]` and the status line
-lists the keys. The app keeps running, and rows it pushes meanwhile don't move the
-cursor off its text.
+lists the keys. The pane is frozen as it was at the start, as in tmux: the app keeps
+running and its output is kept, but it shows only when copy mode ends, so an app that
+redraws in place (a spinner, `top`, Claude Code's fullscreen mode) doesn't change the text
+under the cursor. An app on the alternate screen (`alt` in `pys ls --json`) keeps no
+history in pys: copy mode reaches only its one screen, and its own history is the app's
+to scroll (Claude Code: PgUp / PgDn, the wheel).
 
 | Keys | Do |
 |------|----|

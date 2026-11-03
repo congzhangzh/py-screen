@@ -531,7 +531,7 @@ class Brain:
         w = self.wins.get(p.wid) if p.wid is not None else None
         label = f" {p.wid} {w.name} " if w else " (empty) "
         if w and w.copy:
-            label += f"[copy {w.scroll}/{w.term.history}] "
+            label += f"[copy {w.scroll}/{w.copy.t.history}] "
         elif w and w.scroll:                      # where the view is in the scrollback
             label += f"[{w.scroll}/{w.term.history}] "
         rest = f" {w.cwd() or ''} " if w else ""
@@ -548,8 +548,8 @@ class Brain:
         w = self.wins.get(p.wid) if p.wid is not None else None
         out = []
         if w:
-            s = w.term
-            for y in range(min(s.lines, p.text_h)):
+            s = w.copy.t if w.copy else w.term    # copy mode: the frozen view
+            for y in range(p.text_h if w.copy else min(s.lines, p.text_h)):
                 if not self.shown(p, y, vc, vr):
                     continue
                 marked = w.copy.render(y - w.scroll, pw) if w.copy else None
@@ -734,7 +734,9 @@ class Brain:
                 s = w.term
                 ys = s.take_dirty()
                 self.settle(w)
-                if (w.scroll or w.copy) and ys:   # rows sit lower, or carry copy marks
+                if w.copy:                        # frozen: live output shows when it ends
+                    ys = set()
+                elif w.scroll and ys:             # rows sit lower than the term has them
                     self.redraw.add(w.wid)
                 if w.wid in self.redraw:
                     whole.append(p)
@@ -951,8 +953,9 @@ class Brain:
         """Keep a scrolled view on the rows it shows: rows pushed since it was placed
         raise scroll by as many. It goes live when the history it showed is gone (ED 3,
         a full ring) or the app went to the alternate screen, which has no history."""
-        if w.copy:
+        if w.copy:                                # frozen: scroll is the copy view's own
             w.copy.sync()
+            return
         if not w.scroll:
             return
         t = w.term
