@@ -118,8 +118,9 @@ def test_copy_mode_end_to_end_and_ls_modes():
         assert (w["copy"], w["scroll"]) == (False, 0)        # back to live
 
         t.send(C_RB + "]")                                   # paste: the shell runs 123; 124
-        t.wait_for("123: not found")                         # is typed, not run (no newline
-        t.send("\x15")                                      # after it), as a terminal pastes
+        t.wait_until(lambda s: "123: not found" in s         # is typed, not run (no newline
+                     or "123: command not found" in s)       # after it), as a terminal pastes;
+        t.send("\x15")                                      # dash, or bash as macOS's sh
     finally:
         t.close()
         sess.kill()
