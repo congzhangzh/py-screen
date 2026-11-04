@@ -13,9 +13,10 @@
 # Keep update() from blocking: await a subprocess (cmd() does), or run a slow read in a
 # thread with asyncio.to_thread, so a stuck read can't freeze the screen.
 #
-# The cpu, mem and net widgets below read Linux's /proc; elsewhere they show nothing.
+# The cpu, mem, net and disk widgets below read Linux's /proc; elsewhere they show nothing.
 
 import asyncio
+import os
 import time
 
 
@@ -26,6 +27,13 @@ def proc(path):
             return f.read()
     except OSError:
         return None
+
+
+def kb(a, b, dt):
+    """kB/s (1 kB = 1000 bytes) between two byte counts, 5 columns wide so the line doesn't
+    shift as the number changes; a counter that went backwards (reset) reads 0."""
+    n = max(0, b - a) / dt / 1000
+    return f"{n:5.1f}" if n < 999.95 else f"{n:5.0f}"
 
 
 class Rate:
@@ -88,10 +96,33 @@ class Net(Rate):
         return rx, tx
 
     def show(self, prev, now, dt):
-        def kb(a, b):                  # 5 columns, so the line doesn't shift; a reset reads 0
-            n = max(0, b - a) / dt / 1000
-            return f"{n:5.1f}" if n < 999.95 else f"{n:5.0f}"
-        return f"↓{kb(prev[0], now[0])} ↑{kb(prev[1], now[1])} kB/s"
+        return f"↓{kb(prev[0], now[0], dt)} ↑{kb(prev[1], now[1], dt)} kB/s"
+
+
+class Disk(Rate):
+    """Disk read/write in kB/s: every physical disk, or Disk("nvme0n1") for one.
+    Physical = has /sys/block/<name>/device, which skips partitions (sda1 is counted in sda)
+    and stacked devices (loop, dm-*, md*, zram, zd*), so no byte is counted twice."""
+
+    def __init__(self, dev=None, every=2.0):
+        super().__init__(every)
+        self.dev = dev
+
+    def read(self):                    # /proc/diskstats: major minor name reads merged sectors_read
+        s = proc("/proc/diskstats")    #   ms writes merged sectors_written ...; a sector is 512 B
+        if s is None:
+            return None
+        rd = wr = 0
+        for ln in s.splitlines():
+            v = ln.split()
+            if len(v) < 10:
+                continue
+            if v[2] == self.dev or (self.dev is None and os.path.exists(f"/sys/block/{v[2]}/device")):
+                rd, wr = rd + int(v[5]) * 512, wr + int(v[9]) * 512
+        return rd, wr
+
+    def show(self, prev, now, dt):
+        return f"r {kb(prev[0], now[0], dt)} w {kb(prev[1], now[1], dt)} kB/s"
 
 
 class Mem:
@@ -126,6 +157,7 @@ WIDGETS = [
     Cpu(),
     Mem(),
     Net(),
+    Disk(),
     load(),                            # 1-minute load average (not on Windows)
     Clock(),                           # e.g. 11-04 14:05:09 UTC
 ]
