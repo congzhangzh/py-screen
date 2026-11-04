@@ -3,10 +3,12 @@ the session inside itself, and the keys would loop between the window and the br
 another session may be nested; and in a real window, `pys` says so and the shell goes on."""
 
 import os
+import shutil
 import subprocess
 import sys
 
-from harness import PYS, Session, Term
+import pytest
+from harness import PYS, Session, Term, session_dir
 
 
 def attach(env: dict) -> subprocess.CompletedProcess:
@@ -15,30 +17,40 @@ def attach(env: dict) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=15, check=False)
 
 
-def env_in_window(tmp_path, **extra) -> dict:
-    env = dict(os.environ, PYS_DIR=str(tmp_path / "s"), PYS_WINDOW="3")
+@pytest.fixture
+def d():
+    """A short session dir (pys creates it when it resolves it), removed afterwards."""
+    p = session_dir("nest")
+    yield p
+    shutil.rmtree(p, ignore_errors=True)
+
+
+def env_in_window(d, **extra) -> dict:
+    # d from session_dir(), not pytest's tmp_path: macOS's tmp_path is longer than the
+    # 104 bytes a socket path may have there, and pys stops at that before the guard
+    env = dict(os.environ, PYS_DIR=str(d), PYS_WINDOW="3")
     env.pop("PYS_SESSION", None)
     return {**env, **extra}
 
 
-def test_same_session_is_refused(tmp_path):
-    r = attach(env_in_window(tmp_path, PYS_SESSION=str(tmp_path / "s")))
+def test_same_session_is_refused(d):
+    r = attach(env_in_window(d, PYS_SESSION=str(d)))
     assert r.returncode == 1 and "already inside this session (window 3)" in r.stderr
-    assert not (tmp_path / "s" / "server.log").exists()     # no server was started
+    assert not (d / "server.log").exists()                  # no server was started
 
 
-def test_old_keeper_without_pys_session_counts_as_same(tmp_path):
-    r = attach(env_in_window(tmp_path))
+def test_old_keeper_without_pys_session_counts_as_same(d):
+    r = attach(env_in_window(d))
     assert "already inside this session (window 3)" in r.stderr
 
 
-def test_another_session_may_nest(tmp_path):
-    r = attach(env_in_window(tmp_path, PYS_SESSION=str(tmp_path / "other")))
+def test_another_session_may_nest(d):
+    r = attach(env_in_window(d, PYS_SESSION=str(d) + "-other"))
     assert "already inside" not in r.stderr and "attach needs a terminal" in r.stderr
 
 
-def test_outside_pys_is_unchanged(tmp_path):
-    env = env_in_window(tmp_path)
+def test_outside_pys_is_unchanged(d):
+    env = env_in_window(d)
     del env["PYS_WINDOW"]
     assert "attach needs a terminal" in attach(env).stderr
 
