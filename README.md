@@ -205,6 +205,8 @@ SCROLLBACK = 5000                 # rows of history per window; 0 = none
 ~/.config/pys/config.py`): CPU, memory and network (down/up in kB/s) widgets and a clock
 that ticks on each second, written in the config itself. A widget is any object with
 `.every`, `.text` and `async update(ctx) -> str`, so new ones need no change to pys.
+CPU, memory, network and disk (read/write in kB/s) read `/proc` on Linux; on macOS and
+Windows they use psutil (`uv tool install 'py-screen-mux[stats]'`) and show nothing without it.
 
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
 

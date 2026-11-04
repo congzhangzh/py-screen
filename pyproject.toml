@@ -26,6 +26,11 @@ dependencies = [
     "pywinpty>=3.1; sys_platform == 'win32'",   # ConPTY; the platform layer's Windows Pty
 ]
 
+[project.optional-dependencies]
+# Only the sample config's cpu/mem/net/disk widgets use it, and only off Linux (Linux reads
+# /proc): `uv tool install 'py-screen-mux[stats]'`. pys itself never imports it.
+stats = ["psutil>=7"]
+
 [project.urls]
 Homepage = "https://github.com/congzhangzh/py-screen"
 Source = "https://github.com/congzhangzh/py-screen"
@@ -45,6 +50,7 @@ where = ["src"]
 
 [dependency-groups]
 dev = [
+    "psutil>=7",          # tests the sample config's psutil path on every OS
     "pytest>=9.2.0",
 ]
 

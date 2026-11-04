@@ -6,7 +6,16 @@ import sys
 import time
 from pathlib import Path
 
+import asyncio
+
+import pytest
+
 import py_screen
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 from harness import PYS, Session, Term
 
 SAMPLE = Path(py_screen.__file__).parent / "sample_config.py"
@@ -33,7 +42,7 @@ def test_sample_widgets_in_a_session(tmp_path):
     try:
         t.wait_for(" pys ")
         clock = lambda: t.text().splitlines()[-1].rstrip().rsplit(" ", 2)[-2]
-        if sys.platform.startswith("linux"):              # cpu/mem/net read /proc
+        if sys.platform.startswith("linux") or psutil:    # /proc, or psutil elsewhere
             t.wait_until(lambda s: all(k in s.splitlines()[-1] for k in ("cpu", "mem", "↓", " r", "kB/s")))
         t.wait_until(lambda s: s.splitlines()[-1].rstrip()[-12:-4].count(":") == 2)  # HH:MM:SS
         first = clock()
@@ -55,3 +64,41 @@ def test_disk_counts_whole_physical_disks_once(tmp_path, monkeypatch):
     assert ns["Disk"]().read() == (4 * 512, 8 * 512)
     assert ns["Disk"]("zd0").read() == (100 * 512, 100 * 512)
     assert ns["Disk"]().show((0, 0), (24_600, 2_000_000), 2.0) == "r  12.3 w  1000 kB/s"
+
+
+def sample_ns(**over):
+    ns = {"cmd": lambda *a, **k: None, "load": lambda *a, **k: None}
+    exec(SAMPLE.read_text(), ns)
+    ns.update(over)                    # the widgets read PROC / psutil from here at call time
+    return ns
+
+
+@pytest.mark.skipif(psutil is None, reason="psutil not installed")
+def test_psutil_path_matches_proc():
+    """The psutil path (what macOS and Windows use), run here with /proc turned off; on
+    Linux both paths see the same kernel, so they must agree."""
+    via_ps, via_proc = sample_ns(PROC=False), sample_ns()
+    for name in ("Cpu", "Net", "Disk"):
+        w = via_ps[name]()
+        assert asyncio.run(w.update({})).endswith(("%", "kB/s")), name
+        assert all(x >= 0 for x in w.read()), name
+    busy, total = via_ps["Cpu"]().read()
+    assert 0 <= busy <= total
+    assert abs(via_ps["Mem"]().read() - via_proc["Mem"]().read()) < 5          # percent
+    if sys.platform.startswith("linux"):
+        ps_rx, _ = via_ps["Net"]().read()
+        proc_rx, _ = via_proc["Net"]().read()
+        assert abs(ps_rx - proc_rx) < 10_000_000                               # same counters
+        assert via_ps["Disk"]().read()[0] >= via_proc["Disk"]().read()[0] * 0.99  # psutil adds zvols etc.
+
+
+def test_no_proc_no_psutil_shows_nothing():
+    ns = sample_ns(PROC=False, psutil=None)
+    for name in ("Cpu", "Mem", "Net", "Disk"):
+        assert asyncio.run(ns[name]().update({})) == "", name
+
+
+def test_loopback_names():
+    ns = sample_ns()
+    assert all(ns["loopback"](n) for n in ("lo", "lo0", "Loopback Pseudo-Interface 1"))
+    assert not any(ns["loopback"](n) for n in ("eth0", "en0", "Ethernet", "wlan0"))

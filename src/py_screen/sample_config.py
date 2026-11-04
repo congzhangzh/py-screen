@@ -13,20 +13,34 @@
 # Keep update() from blocking: await a subprocess (cmd() does), or run a slow read in a
 # thread with asyncio.to_thread, so a stuck read can't freeze the screen.
 #
-# The cpu, mem, net and disk widgets below read Linux's /proc; elsewhere they show nothing.
+# The cpu, mem, net and disk widgets read the kernel's /proc on Linux, which needs nothing
+# extra. On macOS and Windows they use psutil if it is installed, and show nothing if not:
+#     uv tool install 'py-screen-mux[stats]'      # or: pip install psutil
+# pys itself never needs psutil; only these widgets do.
 
 import asyncio
 import os
 import time
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+PROC = os.path.exists("/proc/stat")    # Linux: read the kernel's counters directly
+
 
 def proc(path):
-    """A /proc file's text, or None where there is no /proc (macOS, Windows)."""
+    """A /proc file's text, or None if it can't be read."""
     try:
         with open(path) as f:
             return f.read()
     except OSError:
         return None
+
+
+def loopback(name):                    # lo (Linux), lo0 (macOS), "Loopback Pseudo-Interface 1"
+    return name in ("lo", "lo0") or "loopback" in name.lower()
 
 
 def kb(a, b, dt):
@@ -63,12 +77,18 @@ class Rate:
 class Cpu(Rate):
     """CPU busy share, all cores, over the last `every` seconds."""
 
-    def read(self):                    # /proc/stat: cpu user nice system idle iowait irq softirq steal
-        s = proc("/proc/stat")
-        if s is None:
-            return None
-        v = [int(x) for x in s.split("\n", 1)[0].split()[1:9]]
-        return sum(v) - v[3] - v[4], sum(v)          # (busy, total) jiffies
+    def read(self):                    # -> (busy, total), in any unit: only the ratio counts
+        if PROC:                       # /proc/stat: cpu user nice system idle iowait irq softirq steal
+            s = proc("/proc/stat")
+            if s is None:
+                return None
+            v = [int(x) for x in s.split("\n", 1)[0].split()[1:9]]
+            return sum(v) - v[3] - v[4], sum(v)      # guest is inside user already
+        if psutil:                     # seconds; the fields differ by system
+            t = psutil.cpu_times()
+            total = sum(t) - getattr(t, "guest", 0) - getattr(t, "guest_nice", 0)
+            return total - t.idle - getattr(t, "iowait", 0), total
+        return None
 
     def show(self, prev, now, dt):
         total = now[1] - prev[1]
@@ -82,18 +102,27 @@ class Net(Rate):
         super().__init__(every)
         self.iface = iface
 
-    def read(self):                    # /proc/net/dev: "eth0: rx_bytes ... (8 fields) tx_bytes ..."
-        s = proc("/proc/net/dev")
-        if s is None:
-            return None
+    def pick(self, name):
+        return name == self.iface if self.iface else not loopback(name)
+
+    def read(self):                    # -> (received, sent) bytes
         rx = tx = 0
-        for ln in s.splitlines()[2:]:
-            name, _, rest = ln.partition(":")
-            name = name.strip()
-            if name == self.iface or (self.iface is None and name != "lo"):
-                v = rest.split()
-                rx, tx = rx + int(v[0]), tx + int(v[8])
-        return rx, tx
+        if PROC:                       # /proc/net/dev: "eth0: rx_bytes ... (8 fields) tx_bytes ..."
+            s = proc("/proc/net/dev")
+            if s is None:
+                return None
+            for ln in s.splitlines()[2:]:
+                name, _, rest = ln.partition(":")
+                if self.pick(name.strip()):
+                    v = rest.split()
+                    rx, tx = rx + int(v[0]), tx + int(v[8])
+            return rx, tx
+        if psutil:
+            for name, c in psutil.net_io_counters(pernic=True).items():
+                if self.pick(name):
+                    rx, tx = rx + c.bytes_recv, tx + c.bytes_sent
+            return rx, tx
+        return None
 
     def show(self, prev, now, dt):
         return f"↓{kb(prev[0], now[0], dt)} ↑{kb(prev[1], now[1], dt)} kB/s"
@@ -101,42 +130,56 @@ class Net(Rate):
 
 class Disk(Rate):
     """Disk read/write in kB/s: every physical disk, or Disk("nvme0n1") for one.
-    Physical = has /sys/block/<name>/device, which skips partitions (sda1 is counted in sda)
-    and stacked devices (loop, dm-*, md*, zram, zd*), so no byte is counted twice."""
+    On Linux, physical = has /sys/block/<name>/device, which skips partitions (sda1 is
+    counted in sda) and stacked devices (loop, dm-*, md*, zram, zd*), so no byte is
+    counted twice. psutil's own total counts those stacked devices too, so Linux reads
+    /proc even when psutil is there; on macOS and Windows psutil lists whole disks only."""
 
     def __init__(self, dev=None, every=2.0):
         super().__init__(every)
         self.dev = dev
 
-    def read(self):                    # /proc/diskstats: major minor name reads merged sectors_read
-        s = proc("/proc/diskstats")    #   ms writes merged sectors_written ...; a sector is 512 B
-        if s is None:
-            return None
+    def read(self):                    # -> (read, written) bytes
         rd = wr = 0
-        for ln in s.splitlines():
-            v = ln.split()
-            if len(v) < 10:
-                continue
-            if v[2] == self.dev or (self.dev is None and os.path.exists(f"/sys/block/{v[2]}/device")):
-                rd, wr = rd + int(v[5]) * 512, wr + int(v[9]) * 512
-        return rd, wr
+        if PROC:                       # /proc/diskstats: major minor name reads merged sectors_read
+            s = proc("/proc/diskstats")    # ms writes merged sectors_written ...; a sector is 512 B
+            if s is None:
+                return None
+            for ln in s.splitlines():
+                v = ln.split()
+                if len(v) >= 10 and (v[2] == self.dev or (
+                        self.dev is None and os.path.exists(f"/sys/block/{v[2]}/device"))):
+                    rd, wr = rd + int(v[5]) * 512, wr + int(v[9]) * 512
+            return rd, wr
+        if psutil:
+            c = (psutil.disk_io_counters(perdisk=True).get(self.dev) if self.dev
+                 else psutil.disk_io_counters())
+            return None if c is None else (c.read_bytes, c.write_bytes)
+        return None
 
     def show(self, prev, now, dt):
         return f"r {kb(prev[0], now[0], dt)} w {kb(prev[1], now[1], dt)} kB/s"
 
 
 class Mem:
-    """RAM in use: 1 - MemAvailable / MemTotal, so the page cache doesn't count as used."""
+    """RAM in use: 1 - available / total, so the page cache doesn't count as used
+    (psutil's percent is the same formula)."""
 
     def __init__(self, every=5.0):
         self.every, self.text = every, ""
 
+    def read(self):                    # -> percent, or None
+        if PROC:
+            s = proc("/proc/meminfo")
+            if s is None:
+                return None
+            kv = {ln.split(":")[0]: int(ln.split()[1]) for ln in s.splitlines() if ":" in ln}
+            return 100 * (1 - kv["MemAvailable"] / kv["MemTotal"])
+        return psutil.virtual_memory().percent if psutil else None
+
     async def update(self, ctx):
-        s = await asyncio.to_thread(proc, "/proc/meminfo")
-        if s is None:
-            return ""
-        kv = {ln.split(":")[0]: int(ln.split()[1]) for ln in s.splitlines() if ":" in ln}
-        return f"mem{100 * (1 - kv['MemAvailable'] / kv['MemTotal']):4.0f}%"
+        used = await asyncio.to_thread(self.read)
+        return "" if used is None else f"mem{used:4.0f}%"
 
 
 class Clock:
@@ -163,7 +206,7 @@ WIDGETS = [
 ]
 
 BIND = {
-    "T": ("top", ["top"]),             # C-a T opens a window running top
+    "T": ("top", ["top"]),             # C-a T opens a window running top (not on Windows)
 }
 
 # PREFIX = "C-a"       # default: C-] inside GNU screen, else C-a
