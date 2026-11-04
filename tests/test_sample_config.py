@@ -54,8 +54,9 @@ def test_sample_widgets_in_a_session(tmp_path):
 
 
 def test_disk_counts_whole_physical_disks_once(tmp_path, monkeypatch):
-    ns = {"cmd": lambda *a, **k: None, "load": lambda *a, **k: None}
-    exec(SAMPLE.read_text(), ns)
+    """The /proc path's filter, on fake diskstats: PROC is forced on, because on macOS
+    and Windows the widget would (rightly) ask psutil for the real disks instead."""
+    ns = sample_ns(PROC=True)
     stats = (" 254 0 vda 10 0 4 0 20 0 8 0 0 0 0\n"         # disk: 4 sectors read, 8 written
              " 254 1 vda1 10 0 4 0 20 0 8 0 0 0 0\n"        # its partition: already in vda
              " 230 0 zd0 10 0 100 0 20 0 100 0 0 0 0\n")    # a zvol: no device link
