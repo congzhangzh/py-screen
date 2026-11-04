@@ -1,6 +1,8 @@
 """The sample config that ships in the wheel: `pys sample-config` prints it, it loads with
 no error, and in a real session its widgets fill the status line."""
 
+import collections
+import os
 import subprocess
 import sys
 import time
@@ -31,7 +33,7 @@ def test_sample_loads(monkeypatch):
     monkeypatch.setenv("PYS_CONFIG", str(SAMPLE))
     cfg = config.load_config()
     assert cfg.error is None
-    assert [type(w).__name__ for w in cfg.widgets] == ["Cmd", "Cpu", "Mem", "Net", "Disk", "Load", "Clock"]
+    assert [type(w).__name__ for w in cfg.widgets] == ["Cmd", "Cpu", "Mem", "Net", "Disk", "Space", "Load", "Clock"]
     assert "T" in cfg.bind
 
 
@@ -43,7 +45,7 @@ def test_sample_widgets_in_a_session(tmp_path):
         t.wait_for(" pys ")
         clock = lambda: t.text().splitlines()[-1].rstrip().rsplit(" ", 2)[-2]
         if sys.platform.startswith("linux") or psutil:    # /proc, or psutil elsewhere
-            t.wait_until(lambda s: all(k in s.splitlines()[-1] for k in ("cpu", "mem", "↓", " r", "kB/s")))
+            t.wait_until(lambda s: all(k in s.splitlines()[-1] for k in ("cpu", "mem", "↓", " r", "kB/s", "G/")))
         t.wait_until(lambda s: s.splitlines()[-1].rstrip()[-12:-4].count(":") == 2)  # HH:MM:SS
         first = clock()
         time.sleep(1.2)
@@ -97,6 +99,52 @@ def test_no_proc_no_psutil_shows_nothing():
     ns = sample_ns(PROC=False, psutil=None)
     for name in ("Cpu", "Mem", "Net", "Disk"):
         assert asyncio.run(ns[name]().update({})) == "", name
+
+
+def test_space_reads_this_machine():
+    text = sample_ns()["Space"]().read()
+    assert text.startswith(os.path.abspath(os.sep) + " ") and "/" in text.split(" ", 1)[1]
+
+
+Usage = collections.namedtuple("Usage", "total used free")    # as shutil.disk_usage
+
+
+class Ran:                             # what subprocess.run returns, for a fake zfs
+    def __init__(self, out, code=0):
+        self.stdout, self.returncode = out, code
+
+
+def test_space_on_zfs_shows_the_ratio(monkeypatch):
+    """The mount is the longest one that holds the path (/home over /), its device is the
+    dataset that zfs is asked about, and an escaped space in a mount point is decoded."""
+    ns = sample_ns(PROC=True)
+    mounts = ("rpool/ROOT/debian / zfs rw 0 0\n"
+              "rpool/home /home zfs rw 0 0\n"
+              "tank/my\\040data /my\\040data zfs rw 0 0\n"
+              "/dev/sda1 /boot ext4 rw 0 0\n")
+    monkeypatch.setitem(ns, "proc", lambda path: mounts)
+    monkeypatch.setattr(ns["os"].path, "realpath", lambda p: p)
+    monkeypatch.setattr(ns["shutil"], "disk_usage", lambda p: Usage(4 * 2**30, 2**30, 3 * 2**30))
+    asked = []
+    monkeypatch.setattr(ns["subprocess"], "run", lambda argv, **k: asked.append(argv[-1]) or Ran("1.75\n"))
+    assert ns["Space"]("/home/me").mount() == ("rpool/home", "zfs")
+    assert ns["Space"]("/my data/x").mount() == ("tank/my data", "zfs")
+    assert ns["Space"]("/").read() == "/ 1G/4G ×1.75" and asked == ["rpool/ROOT/debian"]
+    assert ns["Space"]("/boot").read() == "/boot 1G/4G"                     # not zfs: no ratio
+
+
+def test_space_without_zfs_command(monkeypatch):
+    ns = sample_ns(PROC=True)
+    monkeypatch.setitem(ns, "proc", lambda path: "rpool/ROOT/debian / zfs rw 0 0\n")
+    monkeypatch.setattr(ns["os"].path, "realpath", lambda p: p)
+    monkeypatch.setattr(ns["shutil"], "disk_usage", lambda p: Usage(2**41, 2**40, 2**40))
+
+    def missing(*a, **k):
+        raise FileNotFoundError("zfs")
+    monkeypatch.setattr(ns["subprocess"], "run", missing)
+    assert ns["Space"]("/").read() == "/ 1.0T/2.0T"
+    monkeypatch.setattr(ns["shutil"], "disk_usage", lambda p: (_ for _ in ()).throw(OSError()))
+    assert ns["Space"]("/gone").read() == ""
 
 
 def test_loopback_names():

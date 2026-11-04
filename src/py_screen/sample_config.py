@@ -16,10 +16,14 @@
 # The cpu, mem, net and disk widgets read the kernel's /proc on Linux, which needs nothing
 # extra. On macOS and Windows they use psutil if it is installed, and show nothing if not:
 #     uv tool install 'py-screen-mux[stats]'      # or: pip install psutil
-# pys itself never needs psutil; only these widgets do.
+# pys itself never needs psutil; only these widgets do. The space widget needs neither:
+# the space comes from the standard library everywhere.
 
 import asyncio
 import os
+import re
+import shutil
+import subprocess
 import time
 
 try:
@@ -182,6 +186,53 @@ class Mem:
         return "" if used is None else f"mem{used:4.0f}%"
 
 
+class Space:
+    """Space on the filesystem that holds `path`: "/ 623G/956G ×1.75" = used / total in
+    GiB, as `df -h` counts, and on ZFS the compression ratio (the data's size / the room
+    it takes on disk), which `zfs get` reads without root. On ZFS the total is used + the
+    pool's free space, which every dataset of the pool shares, so it changes as the others
+    grow. The default path is the root (C:\\ on Windows)."""
+
+    def __init__(self, path=None, every=30.0):
+        self.path, self.every, self.text = path or os.path.abspath(os.sep), every, ""
+
+    def mount(self):                   # -> (device, fstype) of the mount holding self.path
+        real, best = os.path.realpath(self.path), ("", "", "")
+        if PROC:                       # /proc/self/mounts: device mountpoint fstype options ...
+            s = proc("/proc/self/mounts") or ""
+            unesc = lambda x: re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), x)
+            mounts = [[unesc(x) for x in ln.split()[:3]] for ln in s.splitlines()]
+        elif psutil:
+            mounts = [(p.device, p.mountpoint, p.fstype) for p in psutil.disk_partitions(all=True)]
+        else:
+            mounts = []
+        for dev, mnt, fs in mounts:
+            inside = real == mnt or real.startswith(mnt.rstrip("/\\") + os.sep)
+            if inside and len(mnt) >= len(best[1]):
+                best = (dev, mnt, fs)
+        return best[0], best[2]
+
+    def read(self):
+        try:
+            u = shutil.disk_usage(self.path)
+        except OSError:
+            return ""
+        size = lambda n: f"{n / 2**30:.0f}G" if n < 2**40 else f"{n / 2**40:.1f}T"
+        out = f"{self.path} {size(u.used)}/{size(u.total)}"
+        dev, fs = self.mount()
+        if fs == "zfs":
+            try:
+                r = subprocess.run(["zfs", "get", "-Hpo", "value", "compressratio", dev],
+                                   capture_output=True, text=True, timeout=5)
+                out += f" ×{float(r.stdout):.2f}" if r.returncode == 0 else ""
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass                   # no zfs command, or an answer we can't read
+        return out
+
+    async def update(self, ctx):
+        return await asyncio.to_thread(self.read)
+
+
 class Clock:
     """Like clock(), but update() waits for the next whole second itself and every = 0,
     so the seconds never lag or skip (a plain sleep(1) after each update slowly drifts)."""
@@ -201,6 +252,7 @@ WIDGETS = [
     Mem(),
     Net(),
     Disk(),
+    Space(),                           # or Space("/home"), one per filesystem you care about
     load(),                            # 1-minute load average (not on Windows)
     Clock(),                           # e.g. 11-04 14:05:09 UTC
 ]
