@@ -74,7 +74,9 @@ replaced. Pushes that change only docs, specs or bench results publish nothing. 
   recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
 - each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
   engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64,
-  Windows x86_64 and ARM64.
+  Windows x86_64 and ARM64;
+- a ready-to-use bundle per system (below), built from that wheel, unpacked into another
+  folder and smoke-tested there with no uv or Python on `PATH`.
 
 Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed and picks
 the wheel for your system:
@@ -85,6 +87,16 @@ uv tool install py-screen-mux      # the command is pys
 
 The package is `py-screen-mux` on PyPI because `py-screen` is too close to an existing
 `pyscreen` there; the import is `py_screen` and the command `pys`.
+
+Or take the **ready-to-use bundle** for your system from the
+[release](https://github.com/congzhangzh/py-screen/releases): `pys-<version>-<os>-<arch>.tar.gz`
+(`.zip` on Windows) holds its own Python 3.14, pys and its dependencies (pyte, psutil), so
+there is nothing to install and no network needed. Unpack it anywhere and run `bin/pys`
+(`pys.cmd` on Windows); the folder still works after you move it. `release/bundle.py` builds
+it: python-build-standalone's CPython (the one uv installs) with the release's wheel
+installed into it, a launcher in place of pip's scripts (those hold an absolute path), and
+Tk, IDLE and the C headers left out (about 35 MB packed). On macOS, a browser download is
+quarantined: `xattr -dr com.apple.quarantine pys-*` before the first start.
 
 Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one.
 

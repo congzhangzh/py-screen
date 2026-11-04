@@ -16,6 +16,9 @@ name: release
 #                 proven complete (libvterm and the licences included)
 #   smoke × OS    `uv tool install` of that OS's wheel, then release/smoke.py with
 #                 PYS_TERM=vterm, which fails when a wheel lacks the extension
+#   bundle × OS   release/bundle.py: that OS's wheel with its own standalone Python and
+#                 dependencies in one archive (nothing to install), unpacked into another
+#                 folder and smoke-tested from there, with no uv or Python on PATH
 #   draft         a GitHub draft release with every file (a draft creates no tag)
 #   pypi          the wheels and the sdist to PyPI (Trusted Publishing, environment pypi)
 #   release       the draft published, which creates the tag
@@ -221,9 +224,62 @@ jobs:
       - name: Smoke test on the vterm engine
         run: PYS_TERM=vterm uv run --no-project --python 3.14 python release/smoke.py
 
+  bundle:
+    needs: [sdist, wheels]
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sdist.outputs.sha }}
+          sparse-checkout: release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: astral-sh/setup-uv@v6
+      - name: Build the bundle from this OS's wheel
+        env:
+          VERSION: ${{ needs.sdist.outputs.version }}
+        run: uv run --no-project --python 3.14 python release/bundle.py --wheels dist --version "$VERSION" --out bundles
+      - name: Unpack it elsewhere and smoke-test it there, with nothing else on PATH
+        run: |
+          moved="$RUNNER_TEMP/moved"
+          mkdir -p "$moved"
+          py=$(uv python find 3.14)        # only to unpack and to drive smoke.py
+          f=$(ls bundles/pys-*)
+          case $f in
+            *.zip) "$py" -m zipfile -e "$f" "$moved" ;;
+            *) tar -xzf "$f" -C "$moved" ;;
+          esac
+          b=$(ls -d "$moved"/pys-*)
+          ls -l "$b"
+          out="$RUNNER_TEMP/sample.py"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c "$(cygpath -w "$b/pys.cmd")" sample-config > "$out"
+            grep -q "sample pys config" "$out"
+            # what pys.cmd runs; Windows keeps its PATH (System32), the Python is by path
+            PYS_TERM=vterm "$py" release/smoke.py "$b/python/python.exe" -m py_screen
+          else
+            "$b/bin/pys" sample-config > "$out"
+            grep -q "sample pys config" "$out"
+            PATH=/usr/bin:/bin PYS_TERM=vterm "$py" release/smoke.py "$b/bin/pys"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.os }}
+          path: bundles/*
 
   draft:
-    needs: [sdist, smoke]
+    needs: [sdist, smoke, bundle]
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     outputs:
@@ -282,6 +338,26 @@ jobs:
               echo "| $os | \`uv tool install $base/$whl\` |"
             done
             echo
+            echo "**Ready to use, nothing to install:** each archive holds its own Python 3.14, pys and its dependencies (pyte, psutil). Unpack it anywhere and run \`bin/pys\` (\`pys.cmd\` on Windows); \`README.txt\` inside says more."
+            echo
+            echo "| System | Download |"
+            echo "|---|---|"
+            for b in pys-*.tar.gz pys-*.zip; do
+              [ -e "$b" ] || continue
+              case $b in
+                *linux-x86_64*) os="Linux x86_64" ;;
+                *linux-aarch64*) os="Linux aarch64" ;;
+                *macos-arm64*) os="macOS Apple Silicon" ;;
+                *macos-x86_64*) os="macOS Intel" ;;
+                *windows-x86_64*) os="Windows x86_64" ;;
+                *windows-arm64*) os="Windows ARM64" ;;
+                *) os=$b ;;
+              esac
+              echo "| $os | [\`$b\`]($base/$b) |"
+            done
+            echo
+            echo "On macOS, a browser download is quarantined: \`xattr -dr com.apple.quarantine pys-*\` before the first start. Downloaded with curl, it isn't."
+            echo
             echo "Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one."
             echo
             echo "Published once, never replaced."
@@ -305,8 +381,14 @@ jobs:
     permissions:
       id-token: write # Trusted Publishing: no token is stored anywhere
     steps:
+      # only the sdist and the wheels: PyPI takes no other files (the bundles are on GitHub)
       - uses: actions/download-artifact@v4
         with:
+          name: sdist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
           path: dist
           merge-multiple: true
       - run: ls -l dist

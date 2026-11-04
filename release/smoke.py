@@ -4,7 +4,8 @@ and Windows alike: start a private server, open a window with the system's shell
 into it, read its screen back, end the session. No outer terminal is needed: it all goes
 over the RPC link.
 
-Usage: release/smoke.py [pys command]      (default: pys from PATH)
+Usage: release/smoke.py [pys command...]   (default: pys from PATH)
+       e.g. release/smoke.py pys-V-windows-x86_64/python/python.exe -m py_screen
 Set PYS_TERM=vterm to require the native engine: the server then fails to start without it.
 Exit 0 = ok, 1 = failed (the server's log is printed).
 """
@@ -12,9 +13,10 @@ import json, os, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 WIN = sys.platform == "win32"
-pys = shutil.which(sys.argv[1] if len(sys.argv) > 1 else "pys")
-if not pys:
-    sys.exit("smoke: no pys on PATH")
+exe = shutil.which(sys.argv[1] if len(sys.argv) > 1 else "pys")
+if not exe:
+    sys.exit(f"smoke: no {sys.argv[1] if len(sys.argv) > 1 else 'pys'} found")
+pys = [exe, *sys.argv[2:]]          # a command of several words: python -m py_screen
 
 # A private server: its own runtime dir (short on POSIX, for AF_UNIX's sun_path), no user
 # config, a plain shell. It never touches a session already running on this machine.
@@ -31,7 +33,7 @@ else:
 
 
 def run(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([pys, *args], env=env, capture_output=True, text=True, timeout=30)
+    return subprocess.run([*pys, *args], env=env, capture_output=True, text=True, timeout=30)
 
 
 def screen(wid: int) -> list[str]:
@@ -51,7 +53,7 @@ print(f"== {pys}, runtime dir {run_dir}, engine {os.environ.get('PYS_TERM', 'the
 # The smoke test starts the keeper itself, so it can end it even when the brain can't start
 # (a missing engine): then `pys kill` has nobody to ask.
 with open(run_dir / "server.log", "ab") as log:
-    keeper = subprocess.Popen([pys, "_keeper"], env=env, stdin=subprocess.DEVNULL,
+    keeper = subprocess.Popen([*pys, "_keeper"], env=env, stdin=subprocess.DEVNULL,
                               stdout=log, stderr=log)
 try:
     # Wait until it serves, or `pys new` finds no keeper and starts one of its own, which
