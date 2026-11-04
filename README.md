@@ -201,6 +201,11 @@ MOUSE = True                      # False: plain drags select text in the termin
 SCROLLBACK = 5000                 # rows of history per window; 0 = none
 ```
 
+`pys sample-config` prints a fuller sample to start from (`pys sample-config >
+~/.config/pys/config.py`): CPU, memory and network (down/up in kB/s) widgets and a clock
+that ticks on each second, written in the config itself. A widget is any object with
+`.every`, `.text` and `async update(ctx) -> str`, so new ones need no change to pys.
+
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
 
 Sockets live in `$XDG_RUNTIME_DIR/pys/` (`PYS_DIR` overrides; keep it short: an AF_UNIX

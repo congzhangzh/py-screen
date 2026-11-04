@@ -56,11 +56,15 @@ def main() -> None:
     sel.add_argument("wid", type=int)
     sub.add_parser("reload", help="restart the brain; shells keep running")
     sub.add_parser("kill", help="end the session and every window")
+    sub.add_parser("sample-config", help="print a sample ~/.config/pys/config.py")
     sub.add_parser("_keeper")
     sub.add_parser("_brain")
     a = p.parse_args()
 
-    if a.cmd == "_keeper":
+    if a.cmd == "sample-config":                   # the file ships in the wheel, next to us
+        from pathlib import Path
+        sys.stdout.write((Path(__file__).parent / "sample_config.py").read_text())
+    elif a.cmd == "_keeper":
         from . import keeper
         keeper.main()
     elif a.cmd == "_brain":
