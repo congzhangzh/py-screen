@@ -225,6 +225,11 @@ The layout (splits, focus, renamed titles) is saved on every change, so a reload
 Sockets live in `$XDG_RUNTIME_DIR/pys/` (`PYS_DIR` overrides; keep it short: an AF_UNIX
 path is limited to 108 bytes). Server log: `server.log` in that dir.
 
+Each window gets `PYS_WINDOW` (its number) and `PYS_SESSION` (its server's dir). `pys`
+typed in a window of the same session refuses to attach: the session would show inside
+itself and the keys would loop between the window and the server. Another session
+(`PYS_DIR=<dir> pys`) may be nested; give it its own prefix (`PYS_PREFIX`).
+
 ## Test and measure
 
 ```bash

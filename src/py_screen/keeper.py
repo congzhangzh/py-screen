@@ -55,7 +55,10 @@ class Keeper:
     def spawn(self, cmd: list[str], cwd: str | None, cols: int, rows: int) -> Win:
         wid = self.next_wid
         self.next_wid += 1
-        env = dict(os.environ, TERM="screen-256color", PYS_WINDOW=str(wid))
+        # PYS_SESSION names this server (its runtime dir), so a `pys` typed in the window
+        # can tell it would attach to the session it runs in (see __init__.nested_in).
+        env = dict(os.environ, TERM="screen-256color", PYS_WINDOW=str(wid),
+                   PYS_SESSION=os.path.realpath(proto.runtime_dir()))
         env.pop("PYS_DIR_INTERNAL", None)
         p = platform.spawn_pty(cmd, cwd, env, cols, rows)
         w = Win(wid, p.pid, p, cols, rows, cmd)

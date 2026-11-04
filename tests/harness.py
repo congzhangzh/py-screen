@@ -40,6 +40,8 @@ class Session:
                         TERM="xterm-256color", PS1="$ ", PYS_PREFIX="C-]",
                         PYS_CONFIG="/nonexistent")
         self.env.pop("PROMPT_COMMAND", None)
+        for k in ("PYS_WINDOW", "PYS_SESSION"):   # tests may run inside a pys window
+            self.env.pop(k, None)
 
     def pys(self, *args: str, check: bool = True) -> str:
         r = subprocess.run(PYS + list(args), env=self.env, capture_output=True,

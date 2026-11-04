@@ -28,6 +28,22 @@ def ensure_server(timeout: float = 5.0) -> None:
     sys.exit(f"pys: server did not start; see {proto.runtime_dir() / 'server.log'}")
 
 
+def nested_in() -> str | None:
+    """The window this process runs in, if attaching would show that window's own session
+    inside it: keys typed there go to the brain, back to this window, to the inner client
+    and to the brain again, so the window stops answering. PYS_WINDOW and PYS_SESSION come
+    from the keeper (keeper.spawn). A keeper started before PYS_SESSION existed sets only
+    PYS_WINDOW; that window's own session is then the one PYS_DIR picks, so it counts too.
+    Another session (another PYS_DIR) may be nested; only its prefix key needs care."""
+    wid = os.environ.get("PYS_WINDOW")
+    if wid is None:
+        return None
+    mine = os.environ.get("PYS_SESSION")
+    if mine is None or os.path.realpath(mine) == os.path.realpath(proto.runtime_dir()):
+        return wid
+    return None
+
+
 def rpc(**msg) -> dict:
     reply = asyncio.run(proto.rpc(msg))
     if not reply.get("ok"):
@@ -71,6 +87,10 @@ def main() -> None:
         from . import brain
         brain.main()
     elif a.cmd in (None, "attach"):
+        if (wid := nested_in()) is not None:
+            sys.exit(f"pys: already inside this session (window {wid}); attaching here would "
+                     "show it inside itself. Use prefix c for a new window, or another "
+                     "session with PYS_DIR=<dir> pys.")
         if not os.isatty(0):
             sys.exit("pys: attach needs a terminal")
         ensure_server()
