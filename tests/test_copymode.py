@@ -193,3 +193,113 @@ def test_copy_mode_freezes_an_app_that_redraws_end_to_end():
     finally:
         t.close()
         sess.kill()
+
+
+# ---- OSC 52: an app in a pane copies ------------------------------------------------
+def osc52(text: bytes, end: bytes = b"\x07", sel: bytes = b"c") -> bytes:
+    return b"\x1b]52;" + sel + b";" + base64.b64encode(text) + end
+
+
+@pytest.fixture(params=sorted(term.ENGINES))
+def blank(request):
+    return term.ENGINES[request.param](40, 5, 0)
+
+
+def taken(t) -> bytes | None:
+    raw = t.take_osc52()
+    return raw and term.osc52(raw)
+
+
+@pytest.mark.parametrize("end", [b"\x07", b"\x1b\\"])
+def test_osc52_whole_and_cut_at_every_byte(blank, end):
+    seq = b"ab" + osc52("复制 me!".encode(), end) + b"cd"
+    for cut in range(1, len(seq)):
+        blank.feed(b"\x1b[2J\x1b[H")
+        blank.feed(seq[:cut])
+        blank.feed(seq[cut:])
+        assert taken(blank) == "复制 me!".encode(), f"cut at {cut}"
+        assert blank.display[0].rstrip() == "abcd", f"cut at {cut}"   # nothing leaks on screen
+        assert blank.take_osc52() is None                             # taken once
+
+
+def test_osc52_one_byte_at_a_time_padding_included(blank):
+    for i in (1, 2, 3):                      # ==, =, no padding: the end of the base64 varies
+        for b in osc52(b"x" * i):
+            blank.feed(bytes([b]))
+        assert taken(blank) == b"x" * i
+
+
+def test_osc52_the_last_of_a_read_wins(blank):
+    blank.feed(osc52(b"old") + osc52(b"new"))
+    assert taken(blank) == b"new"
+
+
+@pytest.mark.parametrize("seq", [
+    b"\x1b]52;c;?\x07",                      # a query: the clipboard is never read for an app
+    b"\x1b]52;c;\x07",                       # a clear
+    b"\x1b]52;c;@@@@\x07",                   # not base64
+    b"\x1b]52;\x07",                         # no selection field
+])
+def test_osc52_that_copies_nothing(blank, seq):
+    blank.feed(seq + b"after")
+    assert taken(blank) is None
+    assert blank.display[0].rstrip() == "after"
+
+
+def test_osc52_too_big_is_dropped_whole(blank):
+    blank.feed(osc52(b"small") + b"\x1b]52;c;")
+    assert taken(blank) == b"small"
+    for _ in range(40):                      # a partial copy would be worse than none
+        blank.feed(b"QUJD" * 16384)
+    blank.feed(b"\x07after")
+    assert blank.take_osc52() is None
+    assert blank.display[0].rstrip() == "after"
+    blank.feed(osc52(b"next"))
+    assert taken(blank) == b"next"
+
+
+def test_app_copy_reaches_the_client_and_prefix_paste(sess_short):
+    """The whole way: an app prints OSC 52 in a window, the client's terminal gets it,
+    prefix ] pastes it, and a reload (which replays the keeper's ring) sends nothing."""
+    sess = sess_short
+    t = Term(PYS + ["attach"], sess.env, cols=80, rows=24)
+    try:
+        t.wait_for("$")
+        want = base64.b64encode("from the app 复制".encode()).decode()
+        sess.pys("send", "0", f"printf '\\033]52;c;{want}\\033\\\\'", "--enter")
+        t.wait_until(lambda s: f"\x1b]52;c;{want}\x07" in t.raw.decode(errors="replace"))
+
+        sess.pys("send", "0", "cat", "--enter")
+        time.sleep(0.2)
+        t.send(C_RB + "]")                                   # prefix ] types it into cat
+        t.wait_for("from the app 复制")
+        t.send("\x04")
+
+        osc = f"\x1b]52;c;{want}\x07"                       # not the bare base64: the shell's
+        assert t.raw.decode(errors="replace").count(osc) == 1 # echo of the printf has that
+        sess.pys("reload")
+        t.wait_for("$")
+        time.sleep(1)
+        assert t.raw.decode(errors="replace").count(osc) == 1  # old copies stay old
+    finally:
+        t.close()
+
+
+def test_a_hidden_window_copies_too(sess_short):
+    sess = sess_short
+    t = Term(PYS + ["attach"], sess.env, cols=80, rows=24)
+    try:
+        t.wait_for("$")
+        sess.pys("new", "--", "/bin/sh", "-c",
+                 "sleep 0.5; printf '\\033]52;c;aGlkZGVu\\007'; sleep 30")
+        t.send(C_RB + "0")                                   # back to window 0
+        t.wait_until(lambda s: "\x1b]52;c;aGlkZGVu\x07" in t.raw.decode(errors="replace"))
+    finally:
+        t.close()
+
+
+@pytest.fixture
+def sess_short():
+    s = Session("osc52")
+    yield s
+    s.kill()

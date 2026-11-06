@@ -89,7 +89,7 @@ MOUSE_HELP = [
     ("click the status line", "select that window"),
     ("drag a border", "resize: a │ separator or a caption line"),
     ("wheel, touch drag", "scroll back the pane under it; arrows for vim, less"),
-    ("Shift+drag", "select text in your terminal (most terminals)"),
+    ("Shift+drag", "your terminal selects; copy with its key, not C-c"),
 ]
 
 
@@ -143,6 +143,7 @@ class Window:
     scroll: int = 0
     seen: int = 0
     copy: Copy | None = None     # copy mode on this window (prefix [)
+    clip: bytes | None = None    # what its app last copied (OSC 52), for the brain to pass on
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int,
@@ -161,9 +162,15 @@ class Window:
         so a cut inside an escape sequence is fine). Returns how many to ack."""
         data = bytes(self.pending[:n])
         del self.pending[:n]
-        self.term.feed(data)
         replayed = min(self.noack, len(data))
         self.noack -= replayed
+        if replayed:                             # a copy in there was made long ago:
+            self.term.feed(data[:replayed])      # replaying it must not copy it again
+            self.term.take_osc52()
+        self.term.feed(data[replayed:])
+        raw = self.term.take_osc52()
+        if raw:
+            self.clip = term.osc52(raw) or self.clip
         return len(data) - replayed
 
 
@@ -212,7 +219,7 @@ class Brain:
         self.last_key = 0.0                      # for KEY_GRACE
         self.parse_next = 0                      # round robin start, so no window starves
         self.redraw: set[int] = set()            # windows whose pane is drawn whole next frame
-        self.paste_buf = ""                      # what copy mode copied last (prefix ] pastes it)
+        self.paste_buf = ""                      # the last copy (prefix ] pastes it)
 
     # ---- small helpers ------------------------------------------------------
     @property
@@ -343,7 +350,7 @@ class Brain:
         parsed_shown = parsed_hidden = False
         while todo and time.monotonic() < deadline:
             for w in todo:
-                acks[w.wid] = acks.get(w.wid, 0) + w.parse(SLICE)
+                acks[w.wid] = acks.get(w.wid, 0) + self.parse(w, SLICE)
                 if w.wid in shown:
                     parsed_shown = True
                 else:
@@ -361,9 +368,18 @@ class Brain:
         if any(w.pending for w in self.wins.values()):
             self.schedule_parse()
 
+    def parse(self, w: Window, n: int) -> int:
+        """w.parse, and pass on what its app copied. Any window may copy, shown or not,
+        like any terminal tab: the app is the one that decides."""
+        acked = w.parse(n)
+        if w.clip is not None:
+            self.copied(w.clip)
+            w.clip = None
+        return acked
+
     def parse_all(self, w: Window) -> None:
         """Parse everything w has pending now (a capture wants the exact screen)."""
-        n = w.parse(len(w.pending))
+        n = self.parse(w, len(w.pending))
         if n:
             self.to_keeper(proto.pack_ctl({"op": "ack", "wid": w.wid, "n": n}))
 
@@ -1225,7 +1241,7 @@ class Brain:
         what, text = w.copy.keys(data, max(1, p.text_h - 1))
         if what:
             if what == "copy":
-                self.copied(text)
+                self.copied(text.encode())
             self.leave_copy(c, w)
             return
         w.scroll, w.seen = w.copy.follow(w.scroll, p.text_h), w.term.pushed
@@ -1233,12 +1249,12 @@ class Brain:
         self.status_dirty = True
         self.schedule_render()
 
-    def copied(self, text: str) -> None:
-        """Keep it for prefix ], and hand it to every client's terminal as OSC 52, which
-        terminals that allow it (kitty, ghostty, WezTerm, iTerm2, Windows Terminal, foot)
-        put on the system clipboard; others ignore it."""
-        self.paste_buf = text
-        osc = b"\x1b]52;c;" + base64.b64encode(text.encode()) + b"\x07"
+    def copied(self, data: bytes) -> None:
+        """Copy mode or an app copied. Keep it for prefix ], and hand it to every client's
+        terminal as OSC 52, which terminals that allow it (kitty, ghostty, WezTerm, iTerm2,
+        Windows Terminal, foot) put on the system clipboard; others ignore it."""
+        self.paste_buf = data.decode(errors="replace")
+        osc = b"\x1b]52;c;" + base64.b64encode(data) + b"\x07"
         for c in self.clients:
             if not c.writer.is_closing():
                 c.writer.write(proto.pack(proto.DATA, 0, osc))

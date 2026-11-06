@@ -14,10 +14,16 @@ cells, pens and parser state stays behind this interface, so the engine can chan
   system's libvterm; a machine without one gets "pyte").
 
 PYS_TERM=pyte or PYS_TERM=vterm picks one; otherwise the fastest one available.
+
+Both engines also keep the last OSC 52 an app wrote, the sequence that sets the clipboard.
+A pane's terminal is pys, so it is up to pys to pass that on: take_osc52() returns what
+followed "52;" as the app wrote it (selections ; base64), osc52() decodes it.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 from typing import Protocol
 
@@ -42,8 +48,23 @@ class Term(Protocol):
     def take_dirty(self) -> set[int]: ...
     def row(self, y: int, width: int) -> str: ...
     def mode(self, n: int) -> bool: ...
+    def take_osc52(self) -> bytes | None: ...
     @property
     def display(self) -> list[str]: ...
+
+
+def osc52(raw: bytes) -> bytes | None:
+    """What an OSC 52 asks to put on the clipboard, or None if it sets nothing. pys has
+    one clipboard to give, so the selection field doesn't matter. A query ("?") is not
+    answered: an app in a pane doesn't get to read the clipboard of whoever is attached.
+    """
+    _, sep, data = raw.partition(b";")
+    if not sep or data == b"?":
+        return None
+    try:
+        return base64.b64decode(data, validate=True) or None
+    except binascii.Error:
+        return None
 
 
 # ---- pyte ---------------------------------------------------------------------
@@ -129,6 +150,10 @@ class PyteTerm:
     def mode(self, n: int) -> bool:
         """Private mode n (DECSET n) is on. pyte keeps private mode N as N << 5."""
         return (n << 5) in self.screen.mode
+
+    def take_osc52(self) -> bytes | None:
+        clip, self.stream.clip = self.stream.clip, None
+        return clip
 
     @property
     def title(self) -> str:

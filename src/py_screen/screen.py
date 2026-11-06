@@ -30,6 +30,9 @@ from pyte import modes as mo
 from wcwidth import wcwidth
 
 ALT_MODES = {47, 1047, 1049}
+# The most base64 an OSC 52 may carry, about 750 KB of text. An app decides how long the
+# sequence is, so it needs a bound; this is tmux's (input-buffer-size). _vterm.c has it too.
+OSC52_MAX = 1 << 20
 
 
 def _narrow_class() -> str:
@@ -59,7 +62,10 @@ _ALL_NARROW = re.compile(f"[{_NARROW}]*\\Z")
 # parameters, one final byte. Anything else (":" sub-parameters, ">", controls inside,
 # a sequence cut by the end of a read) goes through pyte's parser, byte by byte.
 _CSI = re.compile(r"\x1b\[(\?)?([0-9;]*)([@-~])")
-_CSI_PART = re.compile(r"\x1b(\[\??[0-9;]*)?\Z")      # the start of one, up to the end
+# The start of a CSI or an OSC 52, up to the end of the read.
+_CSI_PART = re.compile(r"\x1b(\[\??[0-9;]*|\](5(2)?)?)?\Z")
+_OSC52 = "\x1b]52;"
+_OSC_END = re.compile("\x07|\x9c|\x1b\\\\")
 # Control characters that act the same in every state of the screen. SI and SO are
 # not here: pyte ignores them in UTF-8 mode only.
 _BASIC = "\x07\x08\t\n\x0b\x0c\r"
@@ -245,6 +251,9 @@ class Stream(pyte.ByteStream):
     """pyte.ByteStream, with plain text, the common control characters and complete
     CSI sequences dispatched straight from the top state of pyte's parser.
 
+    OSC 52 is taken here too, since pyte's parser has no hook for it and drops it: `clip`
+    is what followed "52;" in the last one, for the brain to decode (term.osc52).
+
     It also never stops on a sequence it can't apply. pyte raises out of feed() on a
     CSI with more parameters than its handler takes (ESC [ 1 ; 2 B) or a ? its handler
     doesn't take (ESC [ ? 5 B), and the rest of that read is lost. Terminals ignore the
@@ -263,6 +272,32 @@ class Stream(pyte.ByteStream):
         self._basic_fn = {ch: getattr(screen, self.basic[ch]) for ch in _BASIC}
         self._tail = ""
         self.errors = 0                             # sequences pyte's parser raised on
+        self.clip: bytes | None = None              # the last complete OSC 52
+        self._osc52: list[str] | None = None        # one still arriving, in pieces
+        self._osc52_len = 0
+
+    def _take_osc52(self, text: str, i: int) -> int:
+        """Inside an OSC 52 from text[i]; returns where the parser goes on. It has its
+        end there, or takes all of text and is still inside. A copy over OSC52_MAX is
+        dropped whole."""
+        n = len(text)
+        m = _OSC_END.search(text, i)
+        end = m.start() if m else n
+        if not m and text.endswith("\x1b"):        # maybe half of ESC \: see the next read
+            end = n - 1
+            self._tail = "\x1b"
+        self._osc52_len += end - i
+        if self._osc52_len > OSC52_MAX:
+            self._osc52.clear()
+        else:
+            self._osc52.append(text[i:end])
+        if not m:
+            return n
+        raw = "".join(self._osc52)
+        if raw:
+            self.clip = raw.encode(errors="replace")
+        self._osc52 = None
+        return m.end()
 
     def feed(self, data: bytes) -> None:  # type: ignore[override]
         if self.listener is None:
@@ -276,6 +311,8 @@ class Stream(pyte.ByteStream):
         send = self._send_to_parser
         plain = self._taking_plain_text
         i, n = 0, len(text)
+        if self._osc52 is not None:
+            i = self._take_osc52(text, 0)
         while i < n:
             if plain:
                 m = match_text(text, i)
@@ -290,6 +327,10 @@ class Stream(pyte.ByteStream):
                     i += 1
                     continue
                 if ch == "\x1b":
+                    if text.startswith(_OSC52, i):
+                        self._osc52, self._osc52_len = [], 0
+                        i = self._take_osc52(text, i + len(_OSC52))
+                        continue
                     m = match_csi(text, i)
                     if m:
                         i = m.end()

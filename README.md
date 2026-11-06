@@ -193,7 +193,15 @@ A copy is kept for prefix `]`, which types it into the focused window (as a brac
 paste when the app asked for one), and is sent to your terminal as OSC 52, which puts it
 on the system clipboard in terminals that allow it (kitty, ghostty, WezTerm, iTerm2,
 Windows Terminal, foot; not GNOME Terminal, and not through a GNU screen or tmux around
-pys). `pys ls --json` says per window whether it is in copy mode, how far it is
+pys). It goes through ssh too, since it is only bytes on the way to your terminal.
+
+An app can copy the same way: an OSC 52 from any window, shown or not, is treated as a
+copy, so what Claude Code or vim (over ssh, with a plugin) copies gets to the terminal
+you are attached from. An app can't read the clipboard: pys doesn't answer the OSC 52
+query. A copy over about 750 KB is dropped whole. `Shift+drag` is another path: your
+terminal selects by itself and pys never sees it, so copy with your terminal's own key.
+
+`pys ls --json` says per window whether it is in copy mode, how far it is
 scrolled, how much history it keeps, and which mouse mode (`1000`/`1002`/`1003`, `0` =
 none) and screen (`alt`) its app asked for: an app with a mouse mode gets the wheel itself.
 

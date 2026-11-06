@@ -1804,10 +1804,11 @@ static int on_osc(int command, VTermStringFragment frag, void *user)
       return 1;
 
     case 52:
-      if(state->selection.callbacks)
+      if(state->selection.callbacks) {
         osc_selection(state, frag);
-
-      return 1;
+        return 1;
+      }
+      /* FALLTHROUGH: nobody decodes it here, so a fallback may take it raw */
 
     default:
       if(state->fallbacks && state->fallbacks->osc)

@@ -89,6 +89,11 @@ typedef struct {
     HistRow *hist;            /* a ring of hist_max rows */
     int hist_max, hist_n, hist_head;   /* hist_head = the oldest row's slot */
     long long pushed;         /* rows ever pushed: the brain anchors a scrolled view on it */
+    /* OSC 52: what follows "52;", as the app wrote it. The brain decodes it (term.osc52). */
+    PyObject *osc52;          /* the last complete one, as bytes, or NULL */
+    char *osc52_next;         /* fragments of one still arriving */
+    size_t osc52_len, osc52_cap;
+    int osc52_big;            /* it passed OSC52_MAX: dropped whole when it ends */
 } TermObject;
 
 /* ---- shared helpers ------------------------------------------------------------- */
@@ -145,6 +150,36 @@ static void take_title(TermObject *t, VTermStringFragment f)
                t->title_next ? t->title_next : "", t->next_len);
     }
 }
+
+/* A copy past this is dropped; screen.OSC52_MAX says why this number. */
+#define OSC52_MAX (1 << 20)
+
+static int fb_osc(int command, VTermStringFragment f, void *user)
+{
+    TermObject *t = user;
+    if (command != 52)
+        return 0;
+    if (f.initial) {
+        t->osc52_len = 0;
+        t->osc52_big = 0;
+    }
+    if (t->osc52_len + f.len > OSC52_MAX)
+        t->osc52_big = 1;
+    if (!t->osc52_big)
+        append(&t->osc52_next, &t->osc52_len, &t->osc52_cap, f.str, f.len);
+    if (f.final && !t->osc52_big && t->osc52_len) {
+        PyObject *b = PyBytes_FromStringAndSize(t->osc52_next, (Py_ssize_t)t->osc52_len);
+        if (b)
+            Py_XSETREF(t->osc52, b);
+        else
+            PyErr_Clear();                /* out of memory: this copy is lost, feed goes on */
+    }
+    return 1;
+}
+
+static const VTermStateFallbacks state_fallbacks = {
+    .osc = fb_osc,
+};
 
 static void cb_output(const char *s, size_t len, void *user)
 {
@@ -730,6 +765,7 @@ static int Term_init(TermObject *self, PyObject *args, PyObject *kw)
         return -1;
     }
     vterm_state_set_callbacks(self->state, &state_cbs, self);
+    vterm_state_set_unrecognised_fallbacks(self->state, &state_fallbacks, self);
     vterm_state_reset(self->state, 1);
     mark_rows(self, 0, rows);
     return 0;
@@ -758,6 +794,8 @@ static void Term_dealloc(TermObject *self)
     free(self->dirty);
     free(self->title);
     free(self->title_next);
+    free(self->osc52_next);
+    Py_XDECREF(self->osc52);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -1038,6 +1076,15 @@ static PyObject *Term_get_history(TermObject *self, void *closure)
     return PyLong_FromLong(self->hist_n);
 }
 
+static PyObject *Term_take_osc52(TermObject *self, PyObject *noargs)
+{
+    PyObject *b = self->osc52;
+    self->osc52 = NULL;
+    if (b)
+        return b;
+    Py_RETURN_NONE;
+}
+
 static PyObject *Term_get_pushed(TermObject *self, void *closure)
 {
     return PyLong_FromLongLong(self->pushed);
@@ -1052,6 +1099,8 @@ static PyMethodDef Term_methods[] = {
      "row(y, width): row y in exactly width cells, as SGR + text, ending in a reset;\n"
      "y < 0 reads the scrollback (-1 = the newest row)."},
     {"mode", (PyCFunction)Term_mode, METH_O, "mode(n): private mode n (DECSET n) is on."},
+    {"take_osc52", (PyCFunction)Term_take_osc52, METH_NOARGS,
+     "What followed \"52;\" in the last OSC 52 since the last call, or None; clears it."},
     {NULL}
 };
 

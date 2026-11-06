@@ -56,6 +56,12 @@ Changes on top of upstream, each its own commit (`git log -- deps/libvterm`):
    reads the buffer being resized. This is libvterm's own screen layer, which py-screen
    uses only as the test reference. Not reported upstream yet.
 
+7. `src/state.c`, `on_osc`: with no selection callbacks set, OSC 52 was swallowed; it
+   now goes to the `osc` fallback, as an OSC libvterm doesn't handle does. Not a bug, a
+   choice: py-screen wants the sequence as written (the base64 goes back out to the
+   client), not libvterm's decoded fragments, whose `final` is lost when a read ends
+   between two `=` of the padding. Not for upstream as it stands.
+
 Nothing else in libvterm is changed; py-screen's own C code reaches libvterm through its
 headers and, for its own resize, the line-info arrays and allocator libvterm's state
 expects a resize callback to replace (as `screen.c` does).
