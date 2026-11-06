@@ -61,10 +61,19 @@ unknown erase value) is ignored, as terminals do; the bytes after it are still p
 
 ## Releases
 
-Rolling releases: every push to `main` that passes is published as `<YYYYMMDD>.<N>`, the
-version and the tag alike, on [PyPI as `py-screen-mux`](https://pypi.org/project/py-screen-mux/)
-and as a [GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never
-replaced. Pushes that change only docs, specs or bench results publish nothing. A release must pass, in [`release.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/release.yml):
+A tag is a release. Pushing a tag `<YYYYMMDD>.<N>` on a commit of `main` publishes that
+version on [PyPI as `py-screen-mux`](https://pypi.org/project/py-screen-mux/) and as a
+[GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never replaced:
+
+```bash
+git tag 20261106.1 <sha> && git push origin 20261106.1
+```
+
+Every push, on every branch, and every pull request runs the same tests, in
+[`ci.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/ci.yml), and
+publishes nothing. A release runs them again, then builds, in
+[`release.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/release.yml),
+and must pass:
 
 - the suite on Linux and macOS, and the RPC smoke test on Windows, on both screen engines
   (vterm and pyte);
@@ -261,9 +270,9 @@ client import nothing else that is OS-specific.
 | attached terminal | raw tty, SIGWINCH | console VT mode, size polled every 250 ms |
 | default shell | `$SHELL` | `%PYS_SHELL%`, else `%COMSPEC%` |
 
-CI: Linux runs the full suite on every push; macOS (full suite) and Windows
-(`tests/test_rpc_smoke.py`, plus `spike/win_check.py`) run when the platform layer
-changes, or by hand (`platform` workflow).
+CI: every push runs the suite on Linux and macOS and `tests/test_rpc_smoke.py` on Windows.
+`spike/win_check.py` runs too when the platform layer changes, or by hand (`platform`
+workflow).
 
 ## Known gaps (M1)
 

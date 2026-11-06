@@ -1,15 +1,81 @@
 name: ci
-# Every push: the full suite on Linux. macOS and Windows live in platform.yml.
+# Every push, on every branch, and every pull request get the same tests a release gets:
+# release.yml calls this file, so a tag can't publish what these jobs wouldn't pass.
+#
+#   test × OS     the suite on each OS, on both screen engines (vterm, pyte); on Windows
+#                 the RPC smoke test (the suite's pty harness is POSIX-only)
+#   sanitize      the _vterm extension built with ASan + UBSan, a differential fuzz run
+#   bench         vterm's lead over pyte, on this runner, against the newest recorded run
 on:
   push:
+    branches: ['**'] # not tags: a tag runs these through release.yml
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to test (empty = the one that started the run)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
 jobs:
-  linux:
+  test:
+    strategy:
+      fail-fast: true # the first failure stops the round
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - name: The suite on vterm (the default)
+        run: uv run pytest -q $TESTS
+        env:
+          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
+      - name: The suite on pyte
+        run: PYS_TERM=pyte uv run pytest -q $TESTS
+        env:
+          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
+
+  sanitize:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: astral-sh/setup-uv@v6
       - run: uv python install 3.14
-      - run: uv run pytest -q
+      - name: Build _vterm with ASan + UBSan, then fuzz it against libvterm's own screen
+        run: |
+          uv sync -q
+          py=$(uv run python -c 'import sys; print(sys.executable)')
+          PYTHON=$py tools/vterm_asan.sh "$RUNNER_TEMP/asan"
+          ASAN_OPTIONS=detect_leaks=0:exitcode=3 \
+          UBSAN_OPTIONS=halt_on_error=1:exitcode=4:print_stacktrace=1 \
+          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" PYTHONPATH="$RUNNER_TEMP/asan" \
+            "$py" tools/vterm_fuzz.py --seeds 3000
+
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - name: Parse speed, gated on vterm's lead over pyte
+        run: |
+          uv run python bench/parse_speed.py --json | tee "$RUNNER_TEMP/run.json"
+          python3 release/bench_gate.py "$RUNNER_TEMP/run.json"

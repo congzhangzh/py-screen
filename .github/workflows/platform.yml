@@ -1,6 +1,6 @@
 name: platform
-# macOS and Windows: only when the platform layer (or its smoke test) changes, or by hand.
-# Kept off the every-push path on purpose: Linux CI stays fast.
+# When the platform layer (or its smoke test) changes, or by hand: spike/win_check.py, which
+# ci.yml doesn't run. ci.yml has macOS and Windows on every push.
 on:
   push:
     paths:

@@ -1,14 +1,14 @@
 name: sanitize
 
 # The vterm engine (src/py_screen/_vterm.c + deps/libvterm) built with ASan + UBSan and
-# fuzzed against libvterm's own screen layer (tools/vterm_fuzz.py). Every release runs a
-# short fuzz (release.yml); this is the long one: nightly, with seeds that move with the
+# fuzzed against libvterm's own screen layer (tools/vterm_fuzz.py). Every push runs a
+# short fuzz (ci.yml); this is the long one: nightly, with seeds that move with the
 # date so each night covers new input, and on any branch that changes the C code.
 on:
   schedule:
     - cron: '17 3 * * *'
   push:
-    branches-ignore: [main] # main's pushes run it inside release.yml
+    branches-ignore: [main] # a branch with C changes gets it once more, longer, than ci.yml
     paths: ['deps/**', 'src/py_screen/_vterm.c', 'tools/vterm_*', 'tests/test_vterm.py', 'setup.py']
   workflow_dispatch:
     inputs:

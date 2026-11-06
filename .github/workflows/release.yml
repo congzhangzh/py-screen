@@ -1,16 +1,13 @@
 name: release
 
-# Rolling releases (聪哥: "release more, release quick"): every push to main that passes
-# publishes the release <YYYYMMDD>.<N> (the version and the tag alike) on PyPI, as
-# py-screen-mux, and on GitHub, unless it changes only docs, specs or bench results,
-# or its commit is already released. By hand, a dry run of any commit, on any branch, with
-# nothing published, or a release of a main commit:
-#   gh workflow run release.yml -R congzhangzh/py-screen [--ref <branch>] -f ref=<sha> [-f publish=true]
+# A tag is a release, and nothing else is: pushing the tag <YYYYMMDD>.<N>, on a commit of
+# main, publishes that version on PyPI, as py-screen-mux, and on GitHub. Every push and pull
+# request is tested by ci.yml, and publishes nothing. So:
+#   git tag 20261106.1 <sha> && git push origin 20261106.1
+# By hand, a dry run of any commit, on any branch, with nothing published (version <day>.0):
+#   gh workflow run release.yml -R congzhangzh/py-screen [--ref <branch>] [-f ref=<sha>]
 #
-#   test × OS     the suite on each OS, on both screen engines (vterm, pyte); on Windows
-#                 the RPC smoke test (the suite's pty harness is POSIX-only)
-#   sanitize      the _vterm extension built with ASan + UBSan, a differential fuzz run
-#   bench         vterm's lead over pyte, on this runner, against the newest recorded run
+#   ci            ci.yml: the suite on each OS, the sanitizer, the bench gate
 #   sdist         the sdist, version <YYYYMMDD>.<N>
 #   wheels × OS   cibuildwheel builds each OS's wheel *from that sdist*, so the sdist is
 #                 proven complete (libvterm and the licences included)
@@ -19,31 +16,21 @@ name: release
 #   bundle × OS   release/bundle.py: that OS's wheel with its own standalone Python and
 #                 dependencies in one archive (nothing to install), unpacked into another
 #                 folder and smoke-tested from there, with no uv or Python on PATH
-#   draft         a GitHub draft release with every file (a draft creates no tag)
+#   draft         a GitHub draft release with every file
 #   pypi          the wheels and the sdist to PyPI (Trusted Publishing, environment pypi)
-#   release       the draft published, which creates the tag
+#   release       the draft published, on the tag that started all this
 # so a failure before PyPI leaves only a draft, and one after it is finished by a rerun.
 on:
   push:
-    branches: [main]
-    paths-ignore: ['**.md', LICENSE, 'spec/**', 'bench/results/**']
+    tags: ['[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].*']
   workflow_dispatch:
     inputs:
       ref:
         description: The commit to build (empty = the tip of the branch the run is on)
         default: ''
-      publish:
-        description: Publish the release (only a commit of main; off = a dry run)
-        type: boolean
-        default: false
 
 permissions:
   contents: write
-
-concurrency:
-  # one release at a time, so each counts <N> from the releases before it; a newer push
-  # replaces one still waiting (the newest main is what ships), never one already running
-  group: release
 
 env:
   # one OS per runner image; the wheel each builds is the wheel its smoke job installs
@@ -52,66 +39,13 @@ env:
   CIBW_VERSION: 4.3.1
 
 jobs:
-  test:
-    strategy:
-      fail-fast: true # the first failure stops the round
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest, windows-11-arm]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: astral-sh/setup-uv@v6
-      - run: uv python install 3.14
-      - name: The suite on vterm (the default)
-        run: uv run pytest -q $TESTS
-        env:
-          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
-      - name: The suite on pyte
-        run: PYS_TERM=pyte uv run pytest -q $TESTS
-        env:
-          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
-
-  sanitize:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: astral-sh/setup-uv@v6
-      - run: uv python install 3.14
-      - name: Build _vterm with ASan + UBSan, then fuzz it against libvterm's own screen
-        run: |
-          uv sync -q
-          py=$(uv run python -c 'import sys; print(sys.executable)')
-          PYTHON=$py tools/vterm_asan.sh "$RUNNER_TEMP/asan"
-          ASAN_OPTIONS=detect_leaks=0:exitcode=3 \
-          UBSAN_OPTIONS=halt_on_error=1:exitcode=4:print_stacktrace=1 \
-          LD_PRELOAD="$(gcc -print-file-name=libasan.so)" PYTHONPATH="$RUNNER_TEMP/asan" \
-            "$py" tools/vterm_fuzz.py --seeds 3000
-
-  bench:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: astral-sh/setup-uv@v6
-      - run: uv python install 3.14
-      - name: Parse speed, gated on vterm's lead over pyte
-        run: |
-          uv run python bench/parse_speed.py --json | tee "$RUNNER_TEMP/run.json"
-          python3 release/bench_gate.py "$RUNNER_TEMP/run.json"
+  ci: # every test a push gets, from the one place they are written
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.ref }}
 
   sdist:
-    needs: [test, sanitize, bench]
+    needs: ci
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.v.outputs.tag }}
@@ -126,19 +60,24 @@ jobs:
       - id: v
         name: Name the release
         env:
-          PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+          PUBLISH: ${{ github.event_name == 'push' }}
         run: |
           sha=$(git rev-parse HEAD)
-          # a release is a commit of main, never of another branch; a dry run may be anything
-          if [ "$PUBLISH" = true ] && ! git merge-base --is-ancestor "$sha" origin/main; then
-            echo "::error::${sha:0:12} is not on main"; exit 1
+          if [ "$PUBLISH" = true ]; then
+            # the version is the tag: a final release on PyPI, sorted by date
+            tag=$GITHUB_REF_NAME
+            if ! [[ $tag =~ ^[0-9]{8}\.[1-9][0-9]*$ ]]; then
+              echo "::error::$tag is not <YYYYMMDD>.<N>"; exit 1
+            fi
+            # a release is a commit of main, never of another branch
+            if ! git merge-base --is-ancestor "$sha" origin/main; then
+              echo "::error::$tag: ${sha:0:12} is not on main"; exit 1
+            fi
+          else
+            tag=$(date -u +%Y%m%d).0     # a dry run, whose version no release ever has
           fi
-          day=$(date -u +%Y%m%d)
-          n=$(( $(git ls-remote --tags origin "refs/tags/$day.*" | wc -l) + 1 ))
-          # the version is the tag: a final release on PyPI, sorted by date
-          version=$day.$n
-          echo "release $day.$n: py-screen $version from ${sha:0:12}"
-          { echo "tag=$day.$n"; echo "version=$version"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          echo "release $tag from ${sha:0:12}"
+          { echo "tag=$tag"; echo "version=$tag"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
       - name: Build the sdist
         run: |
           uv version --frozen "${{ steps.v.outputs.version }}"
@@ -280,7 +219,7 @@ jobs:
 
   draft:
     needs: [sdist, smoke, bundle]
-    if: github.event_name == 'push' || inputs.publish
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.draft.outputs.skip }}
@@ -368,7 +307,7 @@ jobs:
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null | grep -qx true; then
             gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
           fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$SHA" \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
             --title "py-screen $VERSION ($TAG)" --notes-file ../notes.md ./*
 
   pypi:
@@ -401,7 +340,7 @@ jobs:
     needs: [sdist, draft, pypi]
     runs-on: ubuntu-latest
     steps:
-      - name: Publish the draft, which creates the tag
+      - name: Publish the draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.sdist.outputs.tag }}
