@@ -4,6 +4,8 @@
 splits that keep running when you detach, and a server you can restart, with new code or a
 new config, without losing a single shell.
 
+![A window floods two million lines, a split runs a clock, the window list opens, and `pys reload` restarts the brain while the clock keeps ticking](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo.v2.gif)
+
 A terminal workspace of my own, in Python: not a clone of screen or tmux, built for fun,
 made more powerful and improved by daily use. The design is in [`spec/`](https://github.com/congzhangzh/py-screen/tree/main/spec/); the
 current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
@@ -366,6 +368,10 @@ uv run pytest            # the suite, about a minute
 Every push and pull request runs the suite on Linux and macOS and the RPC smoke test on Windows
 ([`ci.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/ci.yml)).
 A commit's subject says what changed for a user; it is what the release notes list.
+The demo above is recorded from [`docs/demo.tape`](https://github.com/congzhangzh/py-screen/blob/main/docs/demo.tape)
+with [vhs](https://github.com/charmbracelet/vhs): `docs/record-demo.sh` runs it in a clean
+environment, as a made-up user in a session of its own. A new take gets a new version
+(`demo.v3.gif`) beside the old one.
 
 ## License
 
