@@ -16,7 +16,8 @@ name: release
 #   bundle × OS   release/bundle.py: that OS's wheel with its own standalone Python and
 #                 dependencies in one archive (nothing to install), unpacked into another
 #                 folder and smoke-tested from there, with no uv or Python on PATH
-#   draft         a GitHub draft release with every file
+#   draft         a GitHub draft release with every file; its notes open with what's new:
+#                 the subject of each commit since the last published release
 #   pypi          the wheels and the sdist to PyPI (Trusted Publishing, environment pypi)
 #   release       the draft published, on the tag that started all this
 # so a failure before PyPI leaves only a draft, and one after it is finished by a rerun.
@@ -51,6 +52,7 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       version: ${{ steps.v.outputs.version }}
       sha: ${{ steps.v.outputs.sha }}
+      news: ${{ steps.news.outputs.news }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,6 +80,36 @@ jobs:
           fi
           echo "release $tag from ${sha:0:12}"
           { echo "tag=$tag"; echo "version=$tag"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+      - id: news
+        name: What's new since the last release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.v.outputs.tag }}
+          SHA: ${{ steps.v.outputs.sha }}
+        run: |
+          # the last *published* release this commit builds on: a tag whose run failed has
+          # no release, so its commits are new here too
+          prev=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft | not) | .tagName' | while read -r t; do
+              if [ "$t" != "$TAG" ] && git merge-base --is-ancestor "$t" "$SHA" 2> /dev/null; then
+                echo "$t"; break
+              fi
+            done)
+          url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          # shellcheck disable=SC2016 # the backticks are Markdown
+          {
+            if [ -n "$prev" ]; then
+              echo "**What's new** since [\`$prev\`]($url/releases/tag/$prev) ([every change]($url/compare/$prev...${SHA:0:12})):"
+              range=$prev..$SHA
+            else
+              echo "**What's new:** the first release."
+              range=$SHA
+            fi
+            echo
+            git log --no-merges --reverse --format="- %s ([\`%h\`]($url/commit/%H))" "$range"
+          } > news.md
+          tee -a "$GITHUB_STEP_SUMMARY" < news.md
+          { echo "news<<EOF_NEWS"; cat news.md; echo "EOF_NEWS"; } >> "$GITHUB_OUTPUT"
       - name: Build the sdist
         run: |
           uv version --frozen "${{ steps.v.outputs.version }}"
@@ -235,6 +267,7 @@ jobs:
           TAG: ${{ needs.sdist.outputs.tag }}
           VERSION: ${{ needs.sdist.outputs.version }}
           SHA: ${{ needs.sdist.outputs.sha }}
+          NEWS: ${{ needs.sdist.outputs.news }}
         run: |
           # a commit is released once (a release's tag points at its commit)
           old=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft \
@@ -253,6 +286,8 @@ jobs:
           # shellcheck disable=SC2016 # the backticks are Markdown
           {
             echo "py-screen \`$VERSION\` from \`main\` @ [\`${SHA:0:12}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$SHA)."
+            echo
+            echo "$NEWS"
             echo
             echo "**Tested:** the suite on Linux and macOS, and the RPC smoke test on Windows, on both engines (vterm, pyte); the vterm engine under ASan + UBSan (a differential fuzz run); its parse speed against the newest recorded run; then each wheel, installed, on the vterm engine (\`release/smoke.py\`)."
             echo
