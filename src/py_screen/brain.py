@@ -180,6 +180,7 @@ class Client:
     prefix: int = 0x01
     modes: set[int] = field(default_factory=set)
     stale: bool = True            # needs a full redraw
+    panel: list[str] | None = None   # the rows an overlay last drew; None: no overlay up
     armed: bool = False           # the prefix was typed
     mode: str | None = None       # None | "list" | "rename" | "resize"
     list_idx: int = 0
@@ -645,7 +646,7 @@ class Brain:
             x += width(label)
         return out
 
-    def window_list(self, c: Client) -> str:
+    def window_list(self, c: Client) -> list[str]:
         area = c.rows - 1
         rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
@@ -657,7 +658,7 @@ class Brain:
             out.append(f"\x1b[{y + 1};1H{attr}{text}\x1b[0m")
         for y in range(len(rows), area):
             out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * c.cols}")
-        return "".join(out)
+        return out
 
     def help_sections(self, c: Client) -> list[list[str]]:
         """The help as sections: the windows first (what you'd switch to), then the keys."""
@@ -709,7 +710,7 @@ class Brain:
         cols, per_page, _ = self.help_columns(c)
         return -(-len(cols) // per_page)
 
-    def help_screen(self, c: Client) -> str:
+    def help_screen(self, c: Client) -> list[str]:
         cols, per_page, h = self.help_columns(c)
         pages = -(-len(cols) // per_page)
         c.help_page %= pages
@@ -735,7 +736,7 @@ class Brain:
             attr = "\x1b[0;30;46m" if y == 0 else "\x1b[0m"
             text = lines[y] if y < len(lines) else ""
             out.append(f"\x1b[{y + 1};1H{attr}{fit(text, c.cols)}\x1b[0m")
-        return "".join(out)
+        return out
 
     def render(self) -> None:
         self.render_handle = None
@@ -811,16 +812,21 @@ class Brain:
                 c.stale = True                # slow client: skip, redraw fully later
                 continue
             vc, vr = c.cols, c.rows
-            if c.stale:
-                body = body_full(vc, vr) + self.status_line(c)
-                c.stale = False
-            else:
-                body = body_dirty(vc, vr) + (self.status_line(c) if self.status_dirty else "")
-            if c.mode == "list":
-                body += self.window_list(c)
-            elif c.mode == "help":
-                body += self.help_screen(c)
             overlay = c.mode in ("list", "help")
+            if overlay:                       # it owns the screen: only its changed rows go out
+                rows = self.window_list(c) if c.mode == "list" else self.help_screen(c)
+                rows.append(self.status_line(c))
+                old = [] if c.stale else c.panel or []
+                body = "".join(r for i, r in enumerate(rows) if i >= len(old) or old[i] != r)
+                c.panel, c.stale = rows, False
+            else:
+                if c.panel is not None:       # an overlay closed: bring back what it covered
+                    c.panel, c.stale = None, True
+                if c.stale:
+                    body = body_full(vc, vr) + self.status_line(c)
+                    c.stale = False
+                else:
+                    body = body_dirty(vc, vr) + (self.status_line(c) if self.status_dirty else "")
             cur = ""
             if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - 1:
                 cur = f"\x1b[{cursor[1] + 1};{cursor[0] + 1}H" + ("\x1b[?25h" if show_cursor else "")
@@ -834,6 +840,8 @@ class Brain:
             modes_s = "".join(f"\x1b[?{m}l" for m in sorted(c.modes - mw))
             modes_s += "".join(f"\x1b[?{m}h" for m in sorted(mw - c.modes))
             c.modes = mw
+            if overlay and not body and not modes_s:
+                continue                      # nothing it shows changed: leave the terminal be
             # ?7l: no autowrap in the client's terminal while attached (the client turns
             # it back on when it leaves). Every row is placed with CUP, so pys never
             # needs a wrap, and a row that runs one cell too wide (a character the
@@ -1013,11 +1021,10 @@ class Brain:
             if ev.wheel:
                 if not ev.release and self.help_pages(c) > 1:
                     c.help_page += 1 if ev.button == 1 else -1
-                    c.stale = True
                     self.schedule_render()
             elif ev.press:
                 wid = c.help_hits.get((ev.y, ev.x // max(1, c.help_cw)))
-                c.mode, c.stale = None, True
+                c.mode = None
                 if wid is not None:
                     self.select(wid)
                 self.schedule_render()
@@ -1029,7 +1036,6 @@ class Brain:
             elif ev.press and 1 <= ev.y <= len(self.order):
                 c.mode = None
                 self.select(self.order[ev.y - 1])
-            c.stale = True
             self.schedule_render()
             return
         if c.mode == "copy":                      # the wheel moves copy mode's cursor
@@ -1277,7 +1283,6 @@ class Brain:
                 self.copy_keys(c, w, data)
             return
         if c.mode == "help":                     # Space pages; a digit selects; others close
-            c.stale = True
             if data in (b" ", *DOWN) and self.help_pages(c) > 1:
                 c.help_page += 1
             elif data in UP and self.help_pages(c) > 1:
@@ -1299,7 +1304,6 @@ class Brain:
                 self.select(data[0] - 0x30)
             elif data in (b"\x1b", b"q", bytes([c.prefix])):
                 c.mode = None
-            c.stale = True
         elif c.mode == "rename":
             if data == b"\x1b":                   # a lone Esc cancels; Esc sequences don't
                 c.mode = None

@@ -158,3 +158,35 @@ def test_help_lines_fit_80_columns():
     from py_screen import brain
     for k, v in brain.HELP + brain.NO_PREFIX + brain.MOUSE_HELP:
         assert len(f"   {k:<23} {v}") < 80, k
+
+
+def test_overlay_owns_the_screen():
+    """While the list or the help is up, what runs beneath it stays off the terminal."""
+    sess = Session("m1o")
+    t = Term(PYS + ["attach"], sess.env, 120, 30)
+    try:
+        t.wait_for(" pys ")
+        sess.pys("new")
+        t.wait_for(" 1 ")
+        t.send("while :; do echo TICKTICK; sleep 0.05; done\r")
+        t.wait_for("TICKTICK")
+        for key, mark in (("w", "Num  Title"), ("?", "py-screen help")):
+            t.send(C_RB + key)
+            t.wait_for(mark)
+            time.sleep(0.3)                           # frames sent before the key was read
+            start = len(t.raw)
+            time.sleep(1)
+            assert bytes(t.raw[start:]) == b"", key   # the pane ticks, the terminal hears nothing
+            if key == "w":                            # a move redraws the two rows it touches
+                t.send("j")
+                time.sleep(0.3)
+                got = bytes(t.raw[start:])
+                assert b"\x1b[2J" not in got and b"TICKTICK" not in got
+                assert got.count(b"\x1b[0;30;43m") == 1
+            t.send("\x1b")
+            t.wait_until(lambda s: mark not in s and "TICKTICK" in s)   # the pane comes back
+        t.send("\x03")                                # and is live again
+        t.wait_until(lambda s: "$ " in s)
+    finally:
+        t.close()
+        sess.kill()
