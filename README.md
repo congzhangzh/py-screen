@@ -1,113 +1,52 @@
 # py-screen
 
+**A terminal multiplexer in Python, in the family of GNU screen and tmux:** windows and
+splits that keep running when you detach, and a server you can restart, with new code or a
+new config, without losing a single shell.
+
 A terminal workspace of my own, in Python: not a clone of screen or tmux, built for fun,
 made more powerful and improved by daily use. The design is in [`spec/`](https://github.com/congzhangzh/py-screen/tree/main/spec/); the
 current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
 
-Status: **M1 in progress** (Linux; macOS and Windows on the platform layer, tested on CI). One server, many windows, attach/detach, hot reload, flood-safe typing.
-
-## How it works
-
-```
-client (pys attach) ──► brain (Python, restartable) ──► keeper (tiny, stable) ──► ptys
-```
-
-- **keeper** owns every pty and child process and is the only reader of their output
-  (a byte pump with a ring buffer per window). It restarts the brain when it exits.
-- **brain** holds a pyte screen per window, renders the current one plus a status line,
-  handles keys and answers RPCs. `pys reload` restarts it; shells never notice, because
-  the ptys live in the keeper. The new brain replays the ring buffers, then nudges each pty
-  (SIGWINCH) so full-screen apps repaint.
-- **client** puts the terminal in raw mode, forwards keys and size, prints frames, and
-  reconnects by itself across a brain reload.
-
-### Floods: the screen model is lossless
-
-Every byte a window writes is parsed, in order, whether the window is shown or hidden,
-attached or not. That matters most for apps that draw by diff, like Claude Code: they
-write only the cells they think changed and never rewrite a cell they think is right, so
-a single lost byte leaves wrong cells for good (and a lost mode switch, such as the
-alternate screen or bracketed paste, breaks input too). Until 2026-11-01 py-screen parsed
-only the tail of a flood and dropped a hidden window's output past 128 KB; that is what
-left stray characters in Claude's status line.
-
-Parsing is the slow part (pyte in Python; py-screen's fast paths for plain text, line
-feeds and CSI sequences take it from 0.85 to 1.7 MB/s of scrolling text), so:
-
-- **Backpressure, not dropping.** The keeper gives each window a **credit** of 256 KB
-  un-acked output and stops reading that pty past it. The brain acks bytes only once it
-  has parsed them, so a flooding app simply waits on its write, as under GNU screen. One
-  window can't fill the shared stream, so another window's echo never waits behind it.
-- **Small steps.** The brain parses in steps of 2 ms (2 KB per window per turn, shown
-  windows first, the others round robin), then goes back to keys and frames.
-- **Keys first.** For 100 ms after a key, only shown windows are parsed: nothing else
-  stands between a key and its echo (about 2 ms median while a hidden window floods).
-
-A flood runs at the parser's speed. With the vterm engine (libvterm, in C) that is faster
-than GNU screen: `seq 1 5000000` takes 1.6 s against screen's 13.4 s, a 50 MB coloured log
-0.9 s against 8.1 s ([`bench/README.md`](https://github.com/congzhangzh/py-screen/blob/main/bench/README.md) has the history).
-
-**Screen engines.** Each window's screen is a `term.Term`; `PYS_TERM` picks the engine:
-
-| Engine | What | When |
-|---|---|---|
-| `vterm` (default) | [libvterm](https://github.com/congzhangzh/py-screen/blob/main/deps/README.md)'s parser and state, compiled in, with py-screen's own screen store | When the C extension was built (needs a C compiler at install; release wheels have it) |
-| `pyte` | [pyte](https://github.com/selectel/pyte) with pure-Python fast paths | Always there; about 20× slower on floods |
-
-`PYS_TERM=vterm` makes a missing extension an error instead of a quiet fallback.
-
-A sequence that pyte can't apply (an extra parameter, a `?` where none is defined, an
-unknown erase value) is ignored, as terminals do; the bytes after it are still parsed.
-
-## Releases
-
-A tag is a release. Pushing a tag `<YYYYMMDD>.<N>` on a commit of `main` publishes that
-version on [PyPI as `py-screen-mux`](https://pypi.org/project/py-screen-mux/) and as a
-[GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never replaced:
-
 ```bash
-git tag 20261106.1 <sha> && git push origin 20261106.1
+uv tool install py-screen-mux     # the command is pys; uv fetches Python 3.14 if needed
+pys                               # attach, starting the server on first use
 ```
 
-Every push, on every branch, and every pull request runs the same tests, in
-[`ci.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/ci.yml), and
-publishes nothing. A release runs them again, then builds, in
-[`release.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/release.yml),
-and must pass:
+No uv or Python? Each [release](https://github.com/congzhangzh/py-screen/releases) has a
+ready-to-use bundle per system, with its own Python inside: unpack it and run `bin/pys`.
 
-- the suite on Linux and macOS, and the RPC smoke test on Windows, on both screen engines
-  (vterm and pyte);
-- the vterm engine built with ASan + UBSan and fuzzed against libvterm's own screen
-  (a long run every night, in [`sanitize.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/sanitize.yml));
-- a parse-speed check: vterm's lead over pyte must keep at least half of the newest
-  recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
-- each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
-  engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64,
-  Windows x86_64 and ARM64;
-- a ready-to-use bundle per system (below), built from that wheel, unpacked into another
-  folder and smoke-tested there with no uv or Python on `PATH`.
+## Why py-screen
 
-Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed and picks
-the wheel for your system:
+- **Restart without losing anything.** A tiny *keeper* owns every pty; the *brain* (screens,
+  keys, rendering) is a separate process. `pys reload` (or `C-a R`) starts a new brain with
+  new code or config, and your shells, editors and builds never notice.
+- **Nothing is dropped under a flood.** Every byte a window writes is parsed, in order,
+  shown or hidden, with backpressure instead of dropping. Apps that redraw by diff, such as
+  AI coding agents, stay correct. With its libvterm engine, `seq 1 5000000` takes 1.6 s
+  against GNU screen's 13.4 s.
+- **Made to be driven by scripts and agents.** `pys ls --json`, `pys send`, `pys capture`
+  and `pys title` (a window names itself, and a rename by hand still wins) make every window
+  readable and writable from outside. An app's OSC 52 copy reaches your clipboard.
+- **Configured in Python.** `~/.config/pys/config.py` adds status widgets and key bindings
+  (`pys sample-config` prints a starting point).
+- **Linux, macOS and Windows** (ConPTY), with wheels for six systems, each one tested on
+  its own system before a release.
 
-```bash
-uv tool install py-screen-mux      # the command is pys
-```
+## Quick start
 
-The package is `py-screen-mux` on PyPI because `py-screen` is too close to an existing
-`pyscreen` there; the import is `py_screen` and the command `pys`.
+| Do | Keys (prefix `C-a`) |
+|---|---|
+| new window / split side by side / split stacked | `c` / `\|` / `-` |
+| next / previous / pick from a list | `n` / `p` / `w` |
+| scroll back | mouse wheel, or `Shift-PgUp` |
+| copy mode | `[` (search with `/`, select with `v`, copy with `y`) |
+| detach, then attach again | `d`, then `pys` |
+| every key | `?` |
 
-Or take the **ready-to-use bundle** for your system from the
-[release](https://github.com/congzhangzh/py-screen/releases): `pys-<version>-<os>-<arch>.tar.gz`
-(`.zip` on Windows) holds its own Python 3.14, pys and its dependencies (pyte, psutil), so
-there is nothing to install and no network needed. Unpack it anywhere and run `bin/pys`
-(`pys.cmd` on Windows); the folder still works after you move it. `release/bundle.py` builds
-it: python-build-standalone's CPython (the one uv installs) with the release's wheel
-installed into it, a launcher in place of pip's scripts (those hold an absolute path), and
-Tk, IDLE and the C headers left out (about 35 MB packed). On macOS, a browser download is
-quarantined: `xattr -dr com.apple.quarantine pys-*` before the first start.
-
-Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one.
+**Status:** milestone M1, used every day by its author on Linux; macOS and Windows are
+tested on CI. It is young: tmux and GNU screen do much more (sessions by name, many
+clients with their own views, a huge set of options). See [Known gaps](#known-gaps-m1).
 
 ## Use
 
@@ -266,6 +205,109 @@ typed in a window of the same session refuses to attach: the session would show 
 itself and the keys would loop between the window and the server. Another session
 (`PYS_DIR=<dir> pys`) may be nested; give it its own prefix (`PYS_PREFIX`).
 
+## How it works
+
+```
+client (pys attach) ──► brain (Python, restartable) ──► keeper (tiny, stable) ──► ptys
+```
+
+- **keeper** owns every pty and child process and is the only reader of their output
+  (a byte pump with a ring buffer per window). It restarts the brain when it exits.
+- **brain** holds a pyte screen per window, renders the current one plus a status line,
+  handles keys and answers RPCs. `pys reload` restarts it; shells never notice, because
+  the ptys live in the keeper. The new brain replays the ring buffers, then nudges each pty
+  (SIGWINCH) so full-screen apps repaint.
+- **client** puts the terminal in raw mode, forwards keys and size, prints frames, and
+  reconnects by itself across a brain reload.
+
+### Floods: the screen model is lossless
+
+Every byte a window writes is parsed, in order, whether the window is shown or hidden,
+attached or not. That matters most for apps that draw by diff, like Claude Code: they
+write only the cells they think changed and never rewrite a cell they think is right, so
+a single lost byte leaves wrong cells for good (and a lost mode switch, such as the
+alternate screen or bracketed paste, breaks input too). Until 2026-11-01 py-screen parsed
+only the tail of a flood and dropped a hidden window's output past 128 KB; that is what
+left stray characters in Claude's status line.
+
+Parsing is the slow part (pyte in Python; py-screen's fast paths for plain text, line
+feeds and CSI sequences take it from 0.85 to 1.7 MB/s of scrolling text), so:
+
+- **Backpressure, not dropping.** The keeper gives each window a **credit** of 256 KB
+  un-acked output and stops reading that pty past it. The brain acks bytes only once it
+  has parsed them, so a flooding app simply waits on its write, as under GNU screen. One
+  window can't fill the shared stream, so another window's echo never waits behind it.
+- **Small steps.** The brain parses in steps of 2 ms (2 KB per window per turn, shown
+  windows first, the others round robin), then goes back to keys and frames.
+- **Keys first.** For 100 ms after a key, only shown windows are parsed: nothing else
+  stands between a key and its echo (about 2 ms median while a hidden window floods).
+
+A flood runs at the parser's speed. With the vterm engine (libvterm, in C) that is faster
+than GNU screen: `seq 1 5000000` takes 1.6 s against screen's 13.4 s, a 50 MB coloured log
+0.9 s against 8.1 s ([`bench/README.md`](https://github.com/congzhangzh/py-screen/blob/main/bench/README.md) has the history).
+
+**Screen engines.** Each window's screen is a `term.Term`; `PYS_TERM` picks the engine:
+
+| Engine | What | When |
+|---|---|---|
+| `vterm` (default) | [libvterm](https://github.com/congzhangzh/py-screen/blob/main/deps/README.md)'s parser and state, compiled in, with py-screen's own screen store | When the C extension was built (needs a C compiler at install; release wheels have it) |
+| `pyte` | [pyte](https://github.com/selectel/pyte) with pure-Python fast paths | Always there; about 20× slower on floods |
+
+`PYS_TERM=vterm` makes a missing extension an error instead of a quiet fallback.
+
+A sequence that pyte can't apply (an extra parameter, a `?` where none is defined, an
+unknown erase value) is ignored, as terminals do; the bytes after it are still parsed.
+
+## Releases
+
+A tag is a release. Pushing a tag `<YYYYMMDD>.<N>` on a commit of `main` publishes that
+version on [PyPI as `py-screen-mux`](https://pypi.org/project/py-screen-mux/) and as a
+[GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never replaced:
+
+```bash
+git tag 20261106.1 <sha> && git push origin 20261106.1
+```
+
+Every push, on every branch, and every pull request runs the same tests, in
+[`ci.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/ci.yml), and
+publishes nothing. A release runs them again, then builds, in
+[`release.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/release.yml),
+and must pass:
+
+- the suite on Linux and macOS, and the RPC smoke test on Windows, on both screen engines
+  (vterm and pyte);
+- the vterm engine built with ASan + UBSan and fuzzed against libvterm's own screen
+  (a long run every night, in [`sanitize.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/sanitize.yml));
+- a parse-speed check: vterm's lead over pyte must keep at least half of the newest
+  recorded run's (`release/bench_gate.py`, against `bench/results/parse-*.json`);
+- each wheel, built by cibuildwheel from the sdist, installed and smoke-tested on the vterm
+  engine on its own system: Linux x86_64 and aarch64 (manylinux), macOS arm64 and x86_64,
+  Windows x86_64 and ARM64;
+- a ready-to-use bundle per system (below), built from that wheel, unpacked into another
+  folder and smoke-tested there with no uv or Python on `PATH`.
+
+Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if needed and picks
+the wheel for your system:
+
+```bash
+uv tool install py-screen-mux      # the command is pys
+```
+
+The package is `py-screen-mux` on PyPI because `py-screen` is too close to an existing
+`pyscreen` there; the import is `py_screen` and the command `pys`.
+
+Or take the **ready-to-use bundle** for your system from the
+[release](https://github.com/congzhangzh/py-screen/releases): `pys-<version>-<os>-<arch>.tar.gz`
+(`.zip` on Windows) holds its own Python 3.14, pys and its dependencies (pyte, psutil), so
+there is nothing to install and no network needed. Unpack it anywhere and run `bin/pys`
+(`pys.cmd` on Windows); the folder still works after you move it. `release/bundle.py` builds
+it: python-build-standalone's CPython (the one uv installs) with the release's wheel
+installed into it, a launcher in place of pip's scripts (those hold an absolute path), and
+Tk, IDLE and the C headers left out (about 35 MB packed). On macOS, a browser download is
+quarantined: `xattr -dr com.apple.quarantine pys-*` before the first start.
+
+Elsewhere, the sdist builds with a C compiler, or runs the pure-Python pyte engine without one.
+
 ## Test and measure
 
 ```bash
@@ -310,3 +352,22 @@ workflow).
 - Windows named pipes keep the default DACL (other local users may open them); instead
   every connection must first send a per-session key from the user-private runtime dir.
   A per-user DACL would close the pipe itself; still to do.
+
+## Contributing
+
+Issues with a way to reproduce them are welcome, and so are pull requests. To work on it:
+
+```bash
+git clone https://github.com/congzhangzh/py-screen && cd py-screen
+uv tool install -e .     # pys runs this checkout; `pys reload` loads your edits
+uv run pytest            # the suite, about a minute
+```
+
+Every push and pull request runs the suite on Linux and macOS and the RPC smoke test on Windows
+([`ci.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/ci.yml)).
+A commit's subject says what changed for a user; it is what the release notes list.
+
+## License
+
+MIT ([`LICENSE`](https://github.com/congzhangzh/py-screen/blob/main/LICENSE)). The bundled
+libvterm is MIT as well ([`deps/libvterm/LICENSE`](https://github.com/congzhangzh/py-screen/blob/main/deps/libvterm/LICENSE)).
