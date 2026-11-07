@@ -17,3 +17,16 @@ def test_title_order() -> None:
     assert w.name == "mine"
     w.title = None                                # a rename to nothing: the agent's again
     assert w.name == "agent"
+
+
+def test_proc_start() -> None:
+    import subprocess
+    import sys
+
+    from py_screen import platform
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    token = platform.proc_start(p.pid)
+    assert token is not None and platform.proc_start(p.pid) == token   # stable while it runs
+    p.kill()
+    p.wait()
+    assert platform.proc_start(p.pid) is None

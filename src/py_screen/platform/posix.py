@@ -202,6 +202,26 @@ def proc_cwd(pid: int) -> str | None:
         return None
 
 
+def proc_start(pid: int) -> str | None:
+    """Which process `pid` is: a token that changes when the PID is reused, None when no
+    such process runs. Linux: the start time in clock ticks since boot (/proc/<pid>/stat
+    field 22), and a zombie counts as gone. macOS: only whether the PID exists ("")."""
+    if sys.platform != "darwin":
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                fields = f.read().rsplit(b")", 1)[1].split()   # comm may hold spaces or ")"
+        except (OSError, IndexError):
+            return None
+        return None if fields[0] == b"Z" else fields[19].decode()
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:                          # another user's: it exists
+        pass
+    return ""
+
+
 # ---- the attached terminal ---------------------------------------------------------
 
 

@@ -120,6 +120,7 @@ pys send 0 'make test' --enter
 pys capture 0       # the window's screen as text
 pys title 'release · kit · #12 libfuse'   # name the window this runs in ($PYS_WINDOW)
 pys title --wid 3 --clear                 # or another one; no text: print it
+pys title --owner $PPID 'review · pys'    # dropped when that process ends
 pys reload          # new brain, same shells
 pys kill            # end everything
 ```
@@ -131,6 +132,13 @@ can name its window, the app's spinner titles don't cover it, and a rename by ha
 wins; renaming to nothing shows the agent's title again. `pys ls --json` gives all three
 per window (`title`, `agent_title`, `app_title`) next to the `name` it shows. A `pys
 title` is one line of printable text, at most 200 characters.
+
+An agent title outlives the agent that set it unless it names an owner: with `--owner PID`
+the brain drops the title once that process is gone (checked every 2 s; on Linux by the
+process's start time too, so a reused PID doesn't count). In Claude Code's Bash tool
+`$PPID` is `claude`, so `--owner $PPID` ties the title to the session. Without `--owner`
+it stays until cleared or the window closes. The owner is a PID as the brain sees it, so
+it means nothing from inside a PID namespace (a sandbox with its own PIDs).
 
 Keys: the prefix is **`C-a`**, or **`C-]`** when you run `pys` inside GNU screen (`$STY`
 set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFIX`.

@@ -50,6 +50,7 @@ KEY_GRACE = 0.1                  # after a key, hidden windows wait this long: n
 # each one to the pane under the pointer (see mouse.py and Brain.on_mouse).
 SYNC_MODES = (1, 2004)
 TITLE_MAX = 200                  # characters kept of a `pys title`
+OWNER_EVERY = 2.0                # seconds between checks that an agent title's owner runs
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
                                  # full-screen app without mouse
 WIDGET_COLORS = (33, 36, 32, 37)
@@ -139,6 +140,10 @@ class Window:
     # app such as Claude Code rewrites it all the time (a spinner, the task).
     title: str | None = None
     agent_title: str | None = None
+    # The process an agent title belongs to (`pys title --owner`): the title goes when
+    # it does. `owner_start` is platform.proc_start's token, so a reused PID isn't it.
+    owner: int | None = None
+    owner_start: str | None = None
     pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
     noack: int = 0               # bytes at the front of pending that the keeper replayed:
                                  # it doesn't count them as in flight, so they get no ack
@@ -482,6 +487,8 @@ class Brain:
                  "titles": {w.wid: w.title for w in self.wins.values() if w.title},
                  "agent_titles": {w.wid: w.agent_title for w in self.wins.values()
                                   if w.agent_title},
+                 "owners": {w.wid: [w.owner, w.owner_start] for w in self.wins.values()
+                            if w.owner is not None},
                  "order": self.order}
         try:
             tmp = self.state_path.with_suffix(".tmp")
@@ -525,6 +532,9 @@ class Brain:
         for k, t in state.get("agent_titles", {}).items():
             if int(k) in self.wins:
                 self.wins[int(k)].agent_title = t
+        for k, (pid, start) in state.get("owners", {}).items():
+            if int(k) in self.wins:                # owner_loop drops it if it's gone
+                self.wins[int(k)].owner, self.wins[int(k)].owner_start = pid, start
         order = [w for w in state.get("order", []) if w in self.wins]
         self.order = order + [w for w in self.order if w not in order]
 
@@ -866,6 +876,25 @@ class Brain:
         for c in self.clients:
             if not c.writer.is_closing():
                 c.writer.write(proto.pack_ctl(m))
+
+    # ---- agent titles -----------------------------------------------------------
+    def set_agent_title(self, w: Window, text: str | None, owner: int | None = None,
+                        start: str | None = None) -> None:
+        w.agent_title, w.owner, w.owner_start = text, owner, start
+        self.save_state()
+        self.status_dirty = True
+        self.schedule_render()
+
+    async def owner_loop(self) -> None:
+        """An agent title lives as long as its owner: an agent that exits without
+        clearing its title doesn't leave it behind. Polled, as the owner is any process
+        (not one of ours to wait on); a few stat reads every OWNER_EVERY seconds."""
+        while True:
+            await asyncio.sleep(OWNER_EVERY)
+            for w in list(self.wins.values()):
+                if w.owner is not None and platform.proc_start(w.owner) != w.owner_start:
+                    log(f"window {w.wid}: owner {w.owner} gone, agent title dropped")
+                    self.set_agent_title(w, None)
 
     # ---- widgets --------------------------------------------------------------
     async def widget_loop(self, wd: cfgmod.Widget) -> None:
@@ -1366,6 +1395,7 @@ class Brain:
                     "client_sizes": [[c.cols, c.rows] for c in self.clients],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
                                  "title": w.title, "agent_title": w.agent_title,
+                                 "agent_owner": w.owner,
                                  "app_title": w.term.title or None,
                                  "cmd": w.cmd, "cwd": w.cwd(),
                                  "pending": len(w.pending), "alt": w.term.in_alt,
@@ -1384,12 +1414,13 @@ class Brain:
             if "text" in m:                       # absent: only read it; None: clear it
                 text = " ".join((m["text"] or "").split())   # one line, no tabs
                 text = "".join(ch for ch in text if ch.isprintable())[:TITLE_MAX]
-                w.agent_title = text or None
-                self.save_state()
-                self.status_dirty = True
-                self.schedule_render()
+                owner = m.get("owner") if text else None
+                start = None if owner is None else platform.proc_start(owner)
+                if owner is not None and start is None:
+                    return {"ok": False, "error": f"no process {owner}"}
+                self.set_agent_title(w, text or None, owner, start)
             return {"ok": True, "wid": w.wid, "agent_title": w.agent_title,
-                    "title": w.title, "name": w.name}
+                    "agent_owner": w.owner, "title": w.title, "name": w.name}
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
             self.parse_all(w)
@@ -1449,6 +1480,7 @@ class Brain:
             or self.crash("keeper loop", t.exception()))  # type: ignore[arg-type]
         server = await platform.serve(proto.brain_sock(), self.on_conn, limit=1 << 20)
         widget_tasks = [loop.create_task(self.widget_loop(wd)) for wd in self.cfg.widgets]
+        widget_tasks.append(loop.create_task(self.owner_loop()))
         log("up, pid", os.getpid())
         await self.done.wait()
         server.close()

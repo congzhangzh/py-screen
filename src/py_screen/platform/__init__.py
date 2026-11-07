@@ -12,6 +12,7 @@ signal-handling or ConPTY directly, so one core runs on all three systems.
 | `on_stop(loop, cb)`          | SIGTERM/SIGINT, SIGHUP ignored    | SIGINT/SIGBREAK                  |
 | `proc_cwd(pid)`              | /proc (Linux), libproc (macOS)    | None (not readable without PEB tricks) |
 | `default_shell()`            | `$SHELL`, else /bin/sh            | `$PYS_SHELL`, else `%COMSPEC%`   |
+| `proc_start(pid)`            | /proc start time (Linux), kill 0 (macOS) | GetProcessTimes          |
 | `loadavg()`                  | `os.getloadavg()[0]`              | None                             |
 | `runtime_base()`             | `$XDG_RUNTIME_DIR` or /tmp/pys-UID| `%LOCALAPPDATA%`                 |
 
@@ -24,12 +25,12 @@ import sys
 
 if sys.platform == "win32":
     from .windows import (RawTerm, alive, check_path, cleanup, connect, default_shell, loadavg,
-                          on_stop, proc_cwd, runtime_base, serve, spawn_pty,
+                          on_stop, proc_cwd, proc_start, runtime_base, serve, spawn_pty,
                           start_detached)
 else:
     from .posix import (RawTerm, alive, check_path, cleanup, connect, default_shell, loadavg,
-                        on_stop, proc_cwd, runtime_base, serve, spawn_pty,
+                        on_stop, proc_cwd, proc_start, runtime_base, serve, spawn_pty,
                         start_detached)
 
 __all__ = ["RawTerm", "alive", "check_path", "cleanup", "connect", "default_shell", "loadavg",
-           "on_stop", "proc_cwd", "runtime_base", "serve", "spawn_pty", "start_detached"]
+           "on_stop", "proc_cwd", "proc_start", "runtime_base", "serve", "spawn_pty", "start_detached"]

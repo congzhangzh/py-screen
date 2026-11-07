@@ -81,6 +81,19 @@ def test_rpc_smoke(tmp_path: Path) -> None:
         assert pys("title", "--wid", str(wid)).stdout == "engineering · pys #1\n"
         assert pys("title", "--wid", "99", "x", check=False).returncode != 0
 
+        agent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:                                                     # a title with an owner
+            pys("title", "--wid", str(wid), "--owner", str(agent.pid), "agent")
+            assert win()["agent_title"] == "agent" and win()["agent_owner"] == agent.pid
+        finally:
+            agent.kill()
+            agent.wait()
+        wait(lambda: win()["agent_title"] is None, 10)           # went with its owner
+        assert win()["agent_owner"] is None
+        gone = pys("title", "--wid", str(wid), "--owner", str(agent.pid), "x", check=False)
+        assert gone.returncode != 0 and "no process" in gone.stderr
+        pys("title", "--wid", str(wid), " engineering ·\tpys\n #1  ")   # no owner: stays
+
         brain_pid = ls["pid"]
         pys("reload")                                            # a new brain, same shell
         wait(lambda: (r := pys("ls", "--json", check=False)).returncode == 0

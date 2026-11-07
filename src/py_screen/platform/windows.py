@@ -290,6 +290,30 @@ def proc_cwd(pid: int) -> str | None:
     return None                                      # lives in the child's PEB; not read yet
 
 
+STILL_ACTIVE = 259
+
+
+def proc_start(pid: int) -> str | None:
+    """Which process `pid` is: its creation time (GetProcessTimes), which changes when the
+    PID is reused; None when no such process runs (or it has exited)."""
+    try:
+        h = _winapi.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    except OSError:
+        return None
+    try:
+        if _winapi.GetExitCodeProcess(h) != STILL_ACTIVE:
+            return None
+        times = [wintypes.FILETIME() for _ in range(4)]
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        if not k32.GetProcessTimes(wintypes.HANDLE(h), *(ctypes.byref(t) for t in times)):
+            return None
+        return str(times[0].dwHighDateTime << 32 | times[0].dwLowDateTime)
+    except OSError:
+        return None
+    finally:
+        _winapi.CloseHandle(h)
+
+
 # ---- the attached terminal ---------------------------------------------------------
 
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
