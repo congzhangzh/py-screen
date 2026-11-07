@@ -167,9 +167,12 @@ def test_help_lines_fit_80_columns():
         assert len(f"   {k:<23} {v}") < 80, k
 
 
-def test_overlay_owns_the_screen():
+def test_overlay_owns_the_screen(tmp_path):
     """While the list or the help is up, what runs beneath it stays off the terminal."""
     sess = Session("m1o")
+    cfg = tmp_path / "config.py"          # the status line stays up over an overlay, and a
+    cfg.write_text("WIDGETS = []\n")      # widget that ticks redraws it: keep it still here
+    sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, 120, 30)
     try:
         t.wait_for(" pys ")
