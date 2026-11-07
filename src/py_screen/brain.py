@@ -49,6 +49,7 @@ KEY_GRACE = 0.1                  # after a key, hidden windows wait this long: n
 # The mouse is not mirrored: the brain asks for SGR reports itself and routes
 # each one to the pane under the pointer (see mouse.py and Brain.on_mouse).
 SYNC_MODES = (1, 2004)
+TITLE_MAX = 200                  # characters kept of a `pys title`
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
                                  # full-screen app without mouse
 WIDGET_COLORS = (33, 36, 32, 37)
@@ -132,7 +133,12 @@ class Window:
     pid: int
     cmd: list[str]
     term: term.Term
-    title: str | None = None     # set by C-a , or a BIND entry; wins over the app's title
+    # Three titles, the first one set wins: `title` is set by hand (prefix , or a BIND
+    # entry); `agent_title` by a program through `pys title`, so an agent can name its
+    # window and still lose to the user's own rename; the app's own (OSC 0/2) is last, as an
+    # app such as Claude Code rewrites it all the time (a spinner, the task).
+    title: str | None = None
+    agent_title: str | None = None
     pending: bytearray = field(default_factory=bytearray)   # raw output not parsed yet
     noack: int = 0               # bytes at the front of pending that the keeper replayed:
                                  # it doesn't count them as in flight, so they get no ack
@@ -152,7 +158,8 @@ class Window:
 
     @property
     def name(self) -> str:
-        return self.title or self.term.title or os.path.basename(self.cmd[0])
+        return (self.title or self.agent_title or self.term.title
+                or os.path.basename(self.cmd[0]))
 
     def cwd(self) -> str | None:
         return platform.proc_cwd(self.pid)
@@ -473,6 +480,8 @@ class Brain:
                     "children": [enc(c) for c in n.children]}
         state = {"layout": enc(self.layout.root), "last": self.last,
                  "titles": {w.wid: w.title for w in self.wins.values() if w.title},
+                 "agent_titles": {w.wid: w.agent_title for w in self.wins.values()
+                                  if w.agent_title},
                  "order": self.order}
         try:
             tmp = self.state_path.with_suffix(".tmp")
@@ -513,6 +522,9 @@ class Brain:
         for k, t in state.get("titles", {}).items():
             if int(k) in self.wins:
                 self.wins[int(k)].title = t
+        for k, t in state.get("agent_titles", {}).items():
+            if int(k) in self.wins:
+                self.wins[int(k)].agent_title = t
         order = [w for w in state.get("order", []) if w in self.wins]
         self.order = order + [w for w in self.order if w not in order]
 
@@ -1353,6 +1365,8 @@ class Brain:
                     "clients": len(self.clients), "size": [self.cols, self.rows],
                     "client_sizes": [[c.cols, c.rows] for c in self.clients],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
+                                 "title": w.title, "agent_title": w.agent_title,
+                                 "app_title": w.term.title or None,
                                  "cmd": w.cmd, "cwd": w.cwd(),
                                  "pending": len(w.pending), "alt": w.term.in_alt,
                                  "mouse": mouse.level(w.term.mode), "scroll": w.scroll,
@@ -1363,6 +1377,19 @@ class Brain:
         if cmd == "send":
             self.to_keeper(proto.pack(proto.DATA, m["wid"], m["text"].encode()))
             return {"ok": True}
+        if cmd == "title":
+            w = self.wins.get(m.get("wid"))
+            if w is None:
+                return {"ok": False, "error": f"no window {m.get('wid')}"}
+            if "text" in m:                       # absent: only read it; None: clear it
+                text = " ".join((m["text"] or "").split())   # one line, no tabs
+                text = "".join(ch for ch in text if ch.isprintable())[:TITLE_MAX]
+                w.agent_title = text or None
+                self.save_state()
+                self.status_dirty = True
+                self.schedule_render()
+            return {"ok": True, "wid": w.wid, "agent_title": w.agent_title,
+                    "title": w.title, "name": w.name}
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
             self.parse_all(w)

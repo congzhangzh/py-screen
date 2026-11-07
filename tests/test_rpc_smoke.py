@@ -37,6 +37,8 @@ def test_rpc_smoke(tmp_path: Path) -> None:
     work.mkdir()
     env = dict(os.environ, PYS_DIR=str(run_dir), PYS_CONFIG=str(tmp_path / "none.py"),
                PYS_PREFIX="C-]")
+    for k in ("PYS_WINDOW", "PYS_SESSION"):                      # run from inside a pys window
+        env.pop(k, None)
     if not WIN:
         env.update(SHELL="/bin/sh", PS1="$ ")
         env.pop("PROMPT_COMMAND", None)
@@ -70,12 +72,25 @@ def test_rpc_smoke(tmp_path: Path) -> None:
         if not WIN:                                              # proc_cwd: /proc or libproc
             assert os.path.realpath(ls["windows"][0]["cwd"]) == os.path.realpath(work)
 
+        def win() -> dict:
+            return json.loads(pys("ls", "--json").stdout)["windows"][0]
+
+        assert pys("title", "x", check=False).returncode != 0    # not inside a window here
+        pys("title", "--wid", str(wid), " engineering ·\tpys\n #1  ")   # one clean line
+        assert win()["agent_title"] == win()["name"] == "engineering · pys #1"
+        assert pys("title", "--wid", str(wid)).stdout == "engineering · pys #1\n"
+        assert pys("title", "--wid", "99", "x", check=False).returncode != 0
+
         brain_pid = ls["pid"]
         pys("reload")                                            # a new brain, same shell
         wait(lambda: (r := pys("ls", "--json", check=False)).returncode == 0
              and json.loads(r.stdout)["pid"] != brain_pid)
         assert want in wait(lambda: screen(wid))                 # rebuilt from the ring
         assert json.loads(pys("ls", "--json").stdout)["windows"][0]["pid"] == new["pid"]
+        assert win()["agent_title"] == "engineering · pys #1"   # kept across the reload
+        if not WIN:                                              # from inside: $PYS_WINDOW
+            pys("send", str(wid), f"{sys.executable} -m py_screen title --clear", "--enter")
+            wait(lambda: win()["agent_title"] is None)
 
         missing = pys("new", "--", "no-such-command-pys", check=False)
         if WIN:                                                  # CreateProcess fails

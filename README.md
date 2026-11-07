@@ -118,9 +118,19 @@ pys ls [--json]     # windows
 pys new [--select] [-- cmd …]
 pys send 0 'make test' --enter
 pys capture 0       # the window's screen as text
+pys title 'release · kit · #12 libfuse'   # name the window this runs in ($PYS_WINDOW)
+pys title --wid 3 --clear                 # or another one; no text: print it
 pys reload          # new brain, same shells
 pys kill            # end everything
 ```
+
+A window shows the first title that is set, in this order: one set by hand (prefix `,`, or
+a `BIND` entry, saved with the layout), then one set by a program with `pys title` (also
+kept across a reload), then the app's own (OSC 0/2), then the command's name. So an agent
+can name its window, the app's spinner titles don't cover it, and a rename by hand still
+wins; renaming to nothing shows the agent's title again. `pys ls --json` gives all three
+per window (`title`, `agent_title`, `app_title`) next to the `name` it shows. A `pys
+title` is one line of printable text, at most 200 characters.
 
 Keys: the prefix is **`C-a`**, or **`C-]`** when you run `pys` inside GNU screen (`$STY`
 set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFIX`.

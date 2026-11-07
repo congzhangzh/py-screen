@@ -61,6 +61,13 @@ def main() -> None:
     s.add_argument("wid", type=int)
     s.add_argument("text")
     s.add_argument("--enter", action="store_true", help="append a carriage return")
+    t = sub.add_parser("title", help="name a window (a title set by hand with prefix , wins)",
+                       description="Set, clear or print a window's agent title: it is shown "
+                       "instead of the app's own title, and a title set by hand (prefix ,) "
+                       "is shown instead of it. With no text and no --clear, print it.")
+    t.add_argument("text", nargs="?")
+    t.add_argument("--wid", type=int, help="the window (default: the one this runs in)")
+    t.add_argument("--clear", action="store_true")
     c = sub.add_parser("capture", help="print a window's screen")
     c.add_argument("wid", type=int, nargs="?")
     c.add_argument("--history", action="store_true", help="the scrollback first, then the screen")
@@ -101,6 +108,13 @@ def main() -> None:
     else:
         if a.cmd == "new":
             ensure_server()
+        if a.cmd == "title":
+            if a.clear and a.text is not None:
+                sys.exit("pys: title takes text or --clear, not both")
+            if a.wid is None:
+                if (here := nested_in()) is None:
+                    sys.exit("pys: not inside a window of this session; pass --wid")
+                a.wid = int(here)
         r = {
             "ls": lambda: rpc(cmd="ls"),
             "send": lambda: rpc(cmd="send", wid=a.wid, text=a.text + ("\r" if a.enter else "")),
@@ -109,6 +123,9 @@ def main() -> None:
             "new": lambda: rpc(cmd="new", argv=[x for x in a.argv if x != "--"] or None,
                                cwd=os.getcwd(), select=a.select),
             "select": lambda: rpc(cmd="select", wid=a.wid),
+            "title": lambda: rpc(cmd="title", wid=a.wid,
+                                 **({"text": None} if a.clear else
+                                    {} if a.text is None else {"text": a.text})),
             "reload": lambda: rpc(cmd="reload"),
             "kill": lambda: rpc(cmd="kill"),
         }[a.cmd]()
@@ -120,5 +137,10 @@ def main() -> None:
             print(json.dumps(r))
         elif a.cmd == "capture":
             print("\n".join(line.rstrip() for line in (r.get("history") or []) + r["lines"]))
+        elif a.cmd == "title" and a.text is None and not a.clear:
+            print(r["agent_title"] or "")
+        elif a.cmd == "title" and r["agent_title"] and r["title"]:
+            print(f"pys: window {r['wid']} has a title set by hand, {r['title']!r}; "
+                  "it is shown instead", file=sys.stderr)
         elif a.cmd in ("ls", "new"):
             print(json.dumps(r))
