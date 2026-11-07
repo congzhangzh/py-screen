@@ -155,6 +155,7 @@ set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFI
 | `Space` or the prefix twice | toggle to the last window |
 | `w` `"` `F2` | window list (`j/k`, arrows, digits, Enter, Esc) |
 | `,` | rename the window |
+| `S` | hide / show the widgets on the right of the status line, so the window tabs get the whole line (kept across a reload; `SHOW_WIDGETS = False` in the config starts hidden) |
 | `?` | help: the windows (a digit or a click selects one), these keys, your config's bindings; Space pages when it does not fit |
 | `a` | send a literal prefix |
 | `d` · `C-l` · `R` · `Q` | detach · redraw · reload the brain · quit everything |

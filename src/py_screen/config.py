@@ -110,6 +110,7 @@ class Config:
     error: str | None = None
     mouse: bool = True
     scrollback: int = SCROLLBACK
+    show_widgets: bool = True     # the status line's right side; prefix S toggles it
 
 
 def default() -> Config:
@@ -140,6 +141,7 @@ def load_config() -> Config:
     cfg.bind = {k: (v[0], list(v[1])) for k, v in ns.get("BIND", {}).items()}
     cfg.prefix = ns.get("PREFIX")
     cfg.mouse = bool(ns.get("MOUSE", True))
+    cfg.show_widgets = bool(ns.get("SHOW_WIDGETS", True))
     try:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):

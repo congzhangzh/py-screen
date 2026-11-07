@@ -74,11 +74,11 @@ HELP = [
     ("Space, prefix twice", "toggle to the last window"),
     ("w  \"  F2", "window list (j k, arrows, digits, Enter, Esc)"),
     (",", "rename the window"),
+    ("S", "hide / show the widgets (the tabs get the line)"),
     ("a", "send a literal prefix"),
     ("[ / ]", "copy mode (/ ? search, v select, y copy, q) / paste"),
     ("?", "this help"),
-    ("d / C-l", "detach / redraw"),
-    ("R / Q", "reload the brain (shells stay) / quit everything"),
+    ("d / C-l / R / Q", "detach / redraw / reload the brain / quit everything"),
 ]
 NO_PREFIX = [
     ("Alt-0 .. Alt-9", "select a window"),
@@ -214,6 +214,7 @@ class Brain:
         self.order: list[int] = []
         self.layout = Layout()
         self.last: int | None = None             # for C-a Space / C-a C-a
+        self.widgets_shown: bool | None = None   # prefix S; None: SHOW_WIDGETS decides
         self.clients: list[Client] = []
         self.cols, self.rows = 80, 24            # outer size; panes share rows - 1
         self.keeper_w: asyncio.StreamWriter | None = None
@@ -490,6 +491,8 @@ class Brain:
                  "owners": {w.wid: [w.owner, w.owner_start] for w in self.wins.values()
                             if w.owner is not None},
                  "order": self.order}
+        if self.widgets_shown is not None:
+            state["widgets_shown"] = self.widgets_shown
         try:
             tmp = self.state_path.with_suffix(".tmp")
             tmp.write_text(json.dumps(state))
@@ -535,6 +538,8 @@ class Brain:
         for k, (pid, start) in state.get("owners", {}).items():
             if int(k) in self.wins:                # owner_loop drops it if it's gone
                 self.wins[int(k)].owner, self.wins[int(k)].owner_start = pid, start
+        if isinstance(state.get("widgets_shown"), bool):
+            self.widgets_shown = state["widgets_shown"]
         order = [w for w in state.get("order", []) if w in self.wins]
         self.order = order + [w for w in self.order if w not in order]
 
@@ -633,8 +638,10 @@ class Brain:
         so the window tabs keep a third. A widget that doesn't fit is cut from its left
         ("…" marks the cut) and the ones before it are dropped, so the last widgets (load,
         clock) stay. Without the cut, a long widget ran past the bottom-right corner and
-        the terminal scrolled by a line on every status redraw."""
-        texts = [wd.text for wd in self.cfg.widgets if wd.text]
+        the terminal scrolled by a line on every status redraw. Hidden (prefix S), only a
+        config error stays, as it says why the config does nothing."""
+        shown = self.cfg.show_widgets if self.widgets_shown is None else self.widgets_shown
+        texts = [wd.text for wd in self.cfg.widgets if wd.text] if shown else []
         if self.cfg.error:
             texts.insert(0, self.cfg.error)
         cols = self.cols if cols is None else cols
@@ -1228,6 +1235,12 @@ class Brain:
             self.schedule_render()
         elif key == ",":
             c.mode, c.buf = "rename", ""
+            self.status_dirty = True
+            self.schedule_render()
+        elif key == "S":
+            shown = self.cfg.show_widgets if self.widgets_shown is None else self.widgets_shown
+            self.widgets_shown = not shown
+            self.save_state()
             self.status_dirty = True
             self.schedule_render()
         elif key == "n":

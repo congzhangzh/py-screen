@@ -70,10 +70,17 @@ def test_splits_list_rename_widgets_reload(tmp_path):
         t.send("\x1b")
         t.wait_until(lambda s: "Num  Title" not in s)
 
+        t.send(C_RB + "S")                                # hide the widgets
+        t.wait_until(lambda s: "W1DGET" not in s)
+
         before = panes(sess)
         sess.pys("reload")                                # the layout survives a new brain
         wait(lambda: sess.pys("ls", check=False) != "" and panes(sess) == before, 10)
         t.wait_for(" 0- editor ", timeout=5)              # and so do the title and "last"
+        time.sleep(1.5)                                   # the widget has run again by now
+        assert "W1DGET" not in t.text()                   # still hidden
+        t.send(C_RB + "S")                                # and back
+        t.wait_for("W1DGET")
 
         t.send(C_RB + "x")                                # close the focused pane
         wait(lambda: len(panes(sess)) == 1)

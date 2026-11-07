@@ -3,7 +3,8 @@
 #     pys sample-config > ~/.config/pys/config.py      # then C-a R (or `pys reload`)
 #
 # The file is plain Python, run on every brain start. pys passes in the helpers cmd(),
-# load() and clock(), and reads WIDGETS, BIND, PREFIX, MOUSE and SCROLLBACK from it.
+# load() and clock(), and reads WIDGETS, BIND, PREFIX, MOUSE, SCROLLBACK and SHOW_WIDGETS
+# from it.
 #
 # A status widget is any object with three things, so you can write your own here
 # without changing pys itself:
@@ -264,3 +265,4 @@ BIND = {
 # PREFIX = "C-a"       # default: C-] inside GNU screen, else C-a
 # MOUSE = True         # False: plain drags select text in the terminal again
 # SCROLLBACK = 5000    # rows of history per window; 0 = none
+# SHOW_WIDGETS = True  # False: start with the widgets hidden (prefix S toggles them)
