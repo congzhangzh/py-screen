@@ -330,7 +330,9 @@ def test_a_widget_gets_the_focused_windows_wid_and_pid(tmp_path: Path) -> None:
 class Probe:
     every, text = 0.3, ""
     async def update(self, ctx):
-        open({str(out)!r}, "w").write(json.dumps(ctx))
+        import os                                   # whole or not at all: the test reads
+        open({str(out) + ".tmp"!r}, "w").write(json.dumps(ctx))   # it while it is written
+        os.replace({str(out) + ".tmp"!r}, {str(out)!r})
         return ""
 WIDGETS = [Probe()]
 """)
