@@ -1,0 +1,30 @@
+#!/bin/sh
+# A stand-in for Claude Code, for the recorded demo only (docs/demo-agents.tape): it writes
+# what Claude Code writes (its session file, a transcript line with the context it held),
+# names its window the way an agent does, and waits. No model, no account, nothing real.
+set -e
+home=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+name=agent sid= tokens=$(( ($$ % 7 + 2) * 41000 ))
+while [ $# -gt 0 ]; do
+    case $1 in
+        --name) name=$2; shift ;;
+        --resume) sid=$2; shift ;;
+    esac
+    shift
+done
+[ -n "$sid" ] || sid=$(cat /proc/sys/kernel/random/uuid)
+mkdir -p "$home/sessions" "$home/projects/demo"
+printf '{"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":3,"cache_read_input_tokens":%d,"cache_creation_input_tokens":900}}}\n' \
+    "$tokens" >> "$home/projects/demo/$sid.jsonl"
+printf '{"pid":%d,"sessionId":"%s","cwd":"%s","name":"%s","status":"idle"}\n' \
+    $$ "$sid" "$PWD" "$name" > "$home/sessions/$$.json"
+trap 'rm -f "$home/sessions/$$.json"' EXIT
+case $name in
+    reviewer) title="review PR 42" ;;
+    builder) title="build fix" ;;
+    *) title=$name ;;
+esac
+pys title --owner $$ "$title"
+printf '\n  \033[1;38;5;173m✻ stand-in agent\033[0m  %s\n  session %s\n  folder  %s\n\n  waiting for you…\n' \
+    "$name" "$sid" "$PWD"
+while :; do sleep 3600; done
