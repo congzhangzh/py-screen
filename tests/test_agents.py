@@ -361,3 +361,23 @@ def test_restore_leaves_an_agents_own_title(tmp_path: Path) -> None:
         assert names == ["own title"]
     finally:
         sess.kill()
+
+
+def test_caption_names_where_the_agent_works(tmp_path: Path, monkeypatch) -> None:
+    from py_screen.agents import widget
+    sess = setup(tmp_path, "cp")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", sess.env["CLAUDE_CONFIG_DIR"])
+    repo, wt = make_repo(tmp_path)
+    try:
+        assert widget.caption_text({"cwd": str(tmp_path)}) == str(tmp_path)   # no repo
+        assert widget.caption_text({"cwd": str(repo)}).endswith("repo  main")
+        win = start_claude(sess, repo, "--name", "helper")
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
+        with t.open("a") as f:
+            f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
+                    "name": "Edit", "input": {"file_path": str(wt / "a.txt")}}]}}) + "\n")
+        text = widget.caption_text({"cwd": str(repo), "pid": win["pid"]})
+        assert text.startswith("✎ ") and text.endswith("repo-topic  topic wt")
+    finally:
+        sess.kill()

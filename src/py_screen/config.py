@@ -37,7 +37,13 @@ from pathlib import Path
 
 from . import platform
 
-_CTRL = re.compile(r"[\x00-\x1f\x7f]|\x1b\[[0-9;?]*[A-Za-z]")
+# an escape sequence first: else the bare ESC alone matches and leaves "[31m" behind
+_CTRL = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x1f\x7f]")
+
+
+def clean(text: str) -> str:
+    """One line of printable text: control characters and escape sequences dropped."""
+    return _CTRL.sub("", text.splitlines()[0] if text else "").strip()
 
 
 @dataclass
@@ -123,6 +129,7 @@ class Config:
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
     sessions_keep_env: list[str] = field(default_factory=list)   # for pys-sessions only
+    caption: object | None = None   # CAPTION: text after each shown window's name; None: folder
 
 
 def default() -> Config:
@@ -170,6 +177,12 @@ def load_config() -> Config:
         cfg.kill_hook_timeout = max(0.0, float(ns.get("KILL_HOOK_TIMEOUT", KILL_HOOK_TIMEOUT)))
     except (TypeError, ValueError):
         cfg.error = "config error: KILL_HOOK_TIMEOUT"
+    cap = ns.get("CAPTION")
+    if cap is not None:
+        if callable(getattr(cap, "update", None)) and isinstance(getattr(cap, "every", None), (int, float)):
+            cfg.caption = cap
+        else:
+            cfg.error = "config error: CAPTION"
     keep = ns.get("SESSIONS_KEEP_ENV", [])
     if isinstance(keep, (list, tuple)) and all(isinstance(k, str) for k in keep):
         cfg.sessions_keep_env = list(keep)

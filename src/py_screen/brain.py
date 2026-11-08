@@ -54,6 +54,7 @@ TITLE_MAX = 200                  # characters kept of a `pys title`
 OWNER_EVERY = 2.0                # seconds between checks that an agent title's owner runs
 CHANGE_DELAY = 2.0               # seconds from a window change to the server record and
                                  # ON_CHANGE: a burst (a reload, a split) gives one run
+CAPTION_TIMEOUT = 5.0            # seconds one CAPTION update may take; then the old text stays
 HOOK_TIMEOUT = 60.0              # an ON_CHANGE run after a change is killed after this
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
                                  # full-screen app without mouse
@@ -158,6 +159,7 @@ class Window:
     scroll: int = 0
     seen: int = 0
     copy: Copy | None = None     # copy mode on this window (prefix [)
+    info: str | None = None      # the config's CAPTION text for it; None: its folder
     clip: bytes | None = None    # what its app last copied (OSC 52), for the brain to pass on
 
     @classmethod
@@ -596,7 +598,9 @@ class Brain:
             label += f"[copy {w.scroll}/{w.copy.t.history}] "
         elif w and w.scroll:                      # where the view is in the scrollback
             label += f"[{w.scroll}/{w.term.history}] "
-        rest = f" {w.cwd() or ''} " if w else ""
+        # after the name: the config's CAPTION for this window (e.g. where an agent in it
+        # really works), else, and until its first update, the folder of its shell
+        rest = f" {w.info if w.info is not None else (w.cwd() or '')} " if w else ""
         focused = p is self.layout.focus
         a, b = ("\x1b[0;30;43m", "\x1b[0;33;40m") if focused else ("\x1b[0;37;100m", "\x1b[0;90;40m")
         pw = p.w if vc is None else min(p.w, vc - p.x)
@@ -940,6 +944,29 @@ class Brain:
                 if self.clients:
                     self.schedule_render()
             await asyncio.sleep(wd.every)
+
+    async def caption_loop(self, cap) -> None:
+        """CAPTION: one text per shown window, after its name on the caption line. Every
+        `cap.every` seconds, the windows on screen only (a hidden one costs nothing), one at
+        a time, each update bounded by CAPTION_TIMEOUT so a stuck one can't hold the rest."""
+        while True:
+            for wid in sorted(self.visible()):
+                w = self.wins.get(wid)
+                if w is None:
+                    continue
+                try:
+                    text = await asyncio.wait_for(
+                        cap.update({"cwd": w.cwd(), "wid": w.wid, "pid": w.pid}), CAPTION_TIMEOUT)
+                    text = None if text is None else cfgmod.clean(str(text))
+                except asyncio.TimeoutError:
+                    text = w.info                 # keep the last one rather than flicker
+                except Exception as e:            # a caption never takes the brain down
+                    text = f"!{type(e).__name__}"
+                if text != w.info and wid in self.wins:
+                    w.info = text
+                    if self.clients:
+                        self.schedule_render()
+            await asyncio.sleep(cap.every)
 
     # ---- clients ------------------------------------------------------------
     async def on_conn(self, r: asyncio.StreamReader, wr: asyncio.StreamWriter) -> None:
@@ -1630,6 +1657,8 @@ class Brain:
         server = await platform.serve(proto.brain_sock(), self.on_conn, limit=1 << 20)
         widget_tasks = [loop.create_task(self.widget_loop(wd)) for wd in self.cfg.widgets]
         widget_tasks.append(loop.create_task(self.owner_loop()))
+        if self.cfg.caption is not None:
+            widget_tasks.append(loop.create_task(self.caption_loop(self.cfg.caption)))
         log("up, pid", os.getpid())
         await self.done.wait()
         server.close()
