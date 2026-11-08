@@ -3,6 +3,12 @@ commands (no outer terminal, so no pty harness): a stand-in `claude`, typed into
 own shell as a person does, is found in its window; a snapshot keeps it; after `pys kill`,
 restore opens the window again in its folder, resumes the same session with the flags and
 the variables it kept, and leaves the user's shell in the window when the agent ends.
+
+The stand-in asks first, as Claude Code does in a new folder ("trust this folder?", Enter),
+then reads one line of text: what arrives must be byte for byte what `pys send` was given,
+quotes, `&`, `%VAR%` and `^` included (a .cmd launcher, which cmd.exe parses again, failed
+exactly here). PYS_SMOKE_BIN=<dir> runs the commands an install put there (the release's
+wheel, its bundle) instead of `python -m` from this checkout.
 """
 from __future__ import annotations
 
@@ -17,10 +23,29 @@ from pathlib import Path
 
 WIN = sys.platform == "win32"
 PY = [sys.executable, "-m"]
+BIN = os.environ.get("PYS_SMOKE_BIN")          # an installed pys, pys-agents, pys-sessions
+TYPED = 'say "hi" & echo 100%PATH% ^| x'        # what a batch file would not pass through
+
+
+def cmd(name: str, module: str) -> list[str]:
+    if not BIN:
+        return [*PY, module]
+    exe = shutil.which(name, path=BIN)
+    assert exe, f"no {name} in {BIN}"
+    return [exe]
 
 FAKE = r'''
 import json, os, sys, time, uuid
 home = os.environ["CLAUDE_CONFIG_DIR"]
+if "--resume" not in sys.argv:               # a new session in a new folder asks first
+    print("Do you trust this folder?", flush=True)
+    print(" > Yes, I trust this folder", flush=True)
+    input()
+    print("ready> ", end="", flush=True)
+    typed = input()
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "typed.txt"), "w", encoding="utf-8") as f:
+        f.write(typed)
 sid = sys.argv[sys.argv.index("--resume") + 1] if "--resume" in sys.argv else str(uuid.uuid4())
 name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else None
 os.makedirs(os.path.join(home, "projects", "demo"), exist_ok=True)
@@ -80,13 +105,17 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
         return r
 
     def pys(*a: str, check: bool = True):
-        return run(*PY, "py_screen", *a, check=check)
+        return run(*cmd("pys", "py_screen"), *a, check=check)
 
     def agents(*a: str):                      # `pys-agents [where] --json`
-        return json.loads(run(*PY, "py_screen.agents.listing", *a, "--json").stdout)
+        return json.loads(run(*cmd("pys-agents", "py_screen.agents.listing"), *a, "--json").stdout)
 
     def sessions(*a: str):
-        return run(*PY, "py_screen.agents.sessions", *a)
+        return run(*cmd("pys-sessions", "py_screen.agents.sessions"), *a)
+
+    def screen(wid: int) -> str:
+        r = pys("capture", str(wid), check=False)
+        return r.stdout if r.returncode == 0 else ""
 
     def windows() -> list[dict]:
         r = pys("ls", "--json", check=False)
@@ -108,7 +137,17 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
              and r.stdout.strip())                                # the prompt is up
         pys("send", str(wid), "claude --name helper --permission-mode plan --secret-flag",
             "--enter")
-        first = wait(session_files)[0]
+        wait(lambda: "trust this folder" in screen(wid))
+        pys("send", "--enter", str(wid), "")                      # as the pys-drive skill does
+        wait(lambda: "ready>" in screen(wid))
+        pys("send", str(wid), "--", TYPED)
+        time.sleep(0.4)
+        pys("send", "--enter", str(wid), "")
+        try:
+            first = wait(session_files)[0]
+        except AssertionError:
+            raise AssertionError("the stand-in got no line; its screen:\n" + screen(wid))
+        assert (claude_home / "typed.txt").read_text(encoding="utf-8") == TYPED
         sid = first["sessionId"]
         # a title no legacy code page holds all of (GBK has 管理员, not ✎; cp1252 neither):
         # snapshots, `pys ls` and the restore launcher must go through UTF-8 on every OS
