@@ -1,10 +1,11 @@
 # A sample pys config: copy it to start your own.
 #
-#     pys sample-config > ~/.config/pys/config.py      # then C-a R (or `pys reload`)
+#     pys doctor --init      # writes this file there (never over yours); then C-a R
+#     pys doctor             # where it is, and a check: each widget runs once, typos found
 #
 # The file is plain Python, run on every brain start. pys passes in the helpers cmd(),
 # load() and clock(), and reads WIDGETS, BIND, PREFIX, MOUSE, SCROLLBACK, SHOW_WIDGETS,
-# ON_CHANGE and KILL_HOOK_TIMEOUT from it.
+# ON_CHANGE, KILL_HOOK_TIMEOUT, SESSIONS_KEEP_ENV and CAPTION from it.
 #
 # A status widget is any object with three things, so you can write your own here
 # without changing pys itself:
@@ -248,7 +249,11 @@ class Clock:
 
 # The focused window's git branch, worktree and changes ("fix-x wt 2 mod ↑1"); for a window
 # with a Claude Code session in it, ✎ and the repo it last wrote in, not where it started.
-from py_screen.agents.widget import branch
+from py_screen.agents.widget import branch, caption
+
+# The caption line under each pane: after its number and name, where the work is (folder, git
+# branch and changes; ✎ for the repo an agent in it last wrote in). Without it: the folder.
+CAPTION = caption()
 
 # Shown right to left as room allows: when the line is short, the first ones drop.
 WIDGETS = [

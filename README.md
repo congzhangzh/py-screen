@@ -189,7 +189,28 @@ A row costs about 36 bytes per cell up to its last visible one: a window full of
 ### Config
 
 `~/.config/pys/config.py` (plain Python, read on every brain start, so `C-a R` applies an
-edit): status widgets and extra key bindings. See `src/py_screen/config.py` for the helpers.
+edit): status widgets, the caption line, extra key bindings. See `src/py_screen/config.py` for
+the helpers.
+
+```
+pys doctor                 # where it is, and a check: it loads it as the brain does, runs each
+                           # widget and the CAPTION once (text, time, error), and finds typos
+                           # (WIDGET for WIDGETS: pys never reads it), an ON_CHANGE not on PATH
+pys doctor --init          # write the sample there; never over yours
+pys doctor --reset         # keep yours as config.py.<YYYYMMDD-HHMMSS>, then write the sample
+```
+
+**The caption line** (the line under each pane: its number and name, then its folder) takes
+`CAPTION` in place of the folder: any object with `.every` and `async update(ctx) -> str`, run
+for each window on screen (`ctx`: `cwd`, `wid`, `pid`), at most 5 s per update.
+`caption()` from `py_screen.agents.widget` shows where the work is: the folder and its git
+branch and changes, and for a window with an agent in it, the repo the agent last wrote in (✎),
+not the folder it started in:
+
+```python
+from py_screen.agents.widget import caption
+CAPTION = caption()        # " 3 build fix  ✎ ~/src/app-fix  fix-build wt 1 mod "
+```
 
 ```python
 WIDGETS = [cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10), load(), clock()]

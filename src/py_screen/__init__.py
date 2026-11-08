@@ -83,10 +83,19 @@ def main() -> None:
     sub.add_parser("reload", help="restart the brain; shells keep running")
     sub.add_parser("kill", help="end the session and every window")
     sub.add_parser("sample-config", help="print a sample ~/.config/pys/config.py")
+    dr = sub.add_parser("doctor", help="where the config is, and a check of it: it loads as the "
+                        "brain loads it, each widget runs once, typos are named")
+    dm = dr.add_mutually_exclusive_group()
+    dm.add_argument("--init", action="store_true", help="write the sample config (never over yours)")
+    dm.add_argument("--reset", action="store_true",
+                    help="keep yours as config.py.<time>, then write the sample")
     sub.add_parser("_keeper")
     sub.add_parser("_brain")
     a = p.parse_args()
 
+    if a.cmd == "doctor":
+        from . import doctor
+        sys.exit(doctor.cmd_init(a.reset) if a.init or a.reset else doctor.cmd_check())
     if a.cmd == "sample-config":                   # the file ships in the wheel, next to us
         from pathlib import Path
         sys.stdout.write((Path(__file__).parent / "sample_config.py").read_text())
