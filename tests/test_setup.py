@@ -39,7 +39,9 @@ def test_setup_does_it_all_once(tmp_path: Path) -> None:
     setup(tmp_path, "--yes")
 
     cfg = (tmp_path / "cfg" / "config.py").read_text(encoding="utf-8")
-    assert "sample pys config" in cfg and 'ON_CHANGE = ["pys-sessions", "save", "--quiet"]' in cfg
+    assert "sample pys config" in cfg                                 # the sample, as it is
+    drop = (tmp_path / "cfg" / "config.d" / "50-pys-setup.py").read_text(encoding="utf-8")
+    assert 'ON_CHANGE = ["pys-sessions", "save", "--quiet"]' in drop
     assert (claude / "skills" / "pys-drive" / "SKILL.md").exists()
     assert (claude / "skills" / "pys-restore" / "SKILL.md").exists()
     s = json.loads((claude / "settings.json").read_text(encoding="utf-8"))
@@ -50,20 +52,24 @@ def test_setup_does_it_all_once(tmp_path: Path) -> None:
     assert list(claude.glob("settings.json.2*"))                     # a copy, first
 
     again = setup(tmp_path, "--yes")                                  # nothing twice
-    assert "has an ON_CHANGE already" in again and "runs this install already" in again
+    assert "ON_CHANGE is set already" in again and "runs this install already" in again
     assert "already linked" in again
     s2 = json.loads((claude / "settings.json").read_text(encoding="utf-8"))
     assert s2 == s
 
 
-def test_setup_keeps_your_config_and_adds_only_on_change(tmp_path: Path) -> None:
+def test_setup_never_edits_your_config(tmp_path: Path) -> None:
     cfg = tmp_path / "cfg" / "config.py"
     cfg.parent.mkdir()
     cfg.write_text("PREFIX = 'C-b'\n")
     setup(tmp_path, "--yes")
-    assert cfg.read_text(encoding="utf-8").startswith("PREFIX = 'C-b'\n")
-    assert "ON_CHANGE" in cfg.read_text(encoding="utf-8")
-    assert [p.read_text() for p in cfg.parent.glob("config.py.2*")] == ["PREFIX = 'C-b'\n"]
+    assert cfg.read_text() == "PREFIX = 'C-b'\n"
+    assert (cfg.parent / "config.d" / "50-pys-setup.py").exists()
+    mine = tmp_path / "cfg2" / "config.py"                  # an ON_CHANGE of your own wins
+    mine.parent.mkdir()
+    mine.write_text('ON_CHANGE = ["my-hook"]\n')
+    out = setup(tmp_path, "--yes", PYS_CONFIG=str(mine))
+    assert "ON_CHANGE is set already" in out and not (mine.parent / "config.d").exists()
 
 
 def test_setup_moves_the_hook_to_this_install(tmp_path: Path) -> None:
@@ -91,7 +97,7 @@ def test_the_hook_speaks_only_inside_pys(tmp_path: Path) -> None:
     out = json.loads(r.stdout)["hookSpecificOutput"]
     assert out["hookEventName"] == "SessionStart"
     ctx = out["additionalContext"]
-    assert "window 7" in ctx and "title --owner $PPID" in ctx and "kill" in ctx
+    assert "window 7" in ctx and "title --agent" in ctx and "kill" in ctx
 
 
 def test_the_hook_names_this_install_when_pys_is_not_on_path(tmp_path: Path) -> None:
@@ -100,3 +106,25 @@ def test_the_hook_names_this_install_when_pys_is_not_on_path(tmp_path: Path) -> 
     ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
     py = Path(sys.executable).as_posix() if os.name == "nt" else sys.executable
     assert f'"{py}" -m py_screen title' in ctx
+
+
+def test_config_d_adds_to_config_py_and_a_broken_file_is_left_out(tmp_path: Path) -> None:
+    """config.d/*.py run after config.py, by name, in its namespace; one that fails is
+    named and left out, the others count (pys doctor says which)."""
+    cfg = tmp_path / "config.py"
+    cfg.write_text("PREFIX = 'C-b'\nBIND = {}\n")
+    d = tmp_path / "config.d"
+    d.mkdir()
+    (d / "10-mine.py").write_text("SCROLLBACK = 123\nBIND['x'] = ('new', [])\n")
+    (d / "20-broken.py").write_text("BIND['y'] = ('new', [])\nPREFIX = 'C-q'\n1/0\n")
+    (d / "30-later.py").write_text("MOUSE = False\n")
+    e = env_for(tmp_path, PYS_CONFIG=str(cfg))
+    code = ("from py_screen import config; c = config.load_config(); "
+            "print(c.prefix, c.scrollback, sorted(c.bind), c.mouse, c.error)")
+    out = subprocess.run([sys.executable, "-c", code], env=e, capture_output=True, text=True,
+                         timeout=30).stdout.split()
+    assert out[:3] == ["C-b", "123", "['x']"] and out[3] == "False"   # 20-broken left out
+    assert "20-broken.py" in " ".join(out)
+    doc = subprocess.run([*PY, "py_screen", "doctor"], env=e, capture_output=True, text=True,
+                         encoding="utf-8", timeout=60)
+    assert "+ 10-mine.py" in doc.stdout and "20-broken.py does not run (line 3)" in doc.stdout

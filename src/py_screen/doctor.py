@@ -93,22 +93,24 @@ def check_updates(r: Report, cfg: config.Config) -> None:
 def cmd_check() -> int:
     r = Report()
     p = config.path()
-    if not p.is_file():
+    srcs = config.sources()
+    if not srcs:
         r.ok(f"no config at {p}: pys runs on its defaults; `pys doctor --init` writes the sample")
         return 0
-    r.ok(f"config {p}")
-    ns: dict = {"cmd": config.cmd, "load": config.load, "clock": config.clock}
-    try:
-        exec(compile(p.read_bytes(), str(p), "exec"), ns)  # UTF-8 source, any locale
-    except Exception as e:
+    for f in srcs:
+        r.ok(f"config {f}" if f == p else f"  + {f.name} (config.d, after it)")
+    ns, errors, usable = config.namespace()
+    for f, e in errors:
         tb = e.__traceback__
         while tb and tb.tb_next:
             tb = tb.tb_next
-        where = f" (line {tb.tb_lineno})" if tb and tb.tb_frame.f_code.co_filename == str(p) else ""
-        r.bad(f"it does not run{where}: {type(e).__name__}: {e}; the brain falls back to its defaults")
+        where = f" (line {tb.tb_lineno})" if tb and tb.tb_frame.f_code.co_filename == str(f) else ""
+        r.bad(f"{f.name} does not run{where}: {type(e).__name__}: {e}; " +
+              ("the brain falls back to its defaults" if f == p else "it is left out, the rest counts"))
+    if not usable:
         return 1
     cfg = config.load_config()
-    if cfg.error:
+    if cfg.error and not errors:          # a file's own error is named above already
         r.bad(cfg.error)
     for name in sorted(k for k in ns if k.isupper() and k not in KEYS):
         if close := difflib.get_close_matches(name, KEYS, n=1, cutoff=0.75):

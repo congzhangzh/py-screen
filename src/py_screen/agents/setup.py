@@ -2,9 +2,9 @@
 tool or the bundle. A dry run by default (what it would do); --yes does it.
 
   1. a config: the sample when there is none; then ON_CHANGE = pys-sessions save, so every
-     change of the windows (and a kill) leaves a snapshot to restore from. A config of your
-     own is kept: a copy beside it first, then the ON_CHANGE lines added at its end, and only
-     when it has no ON_CHANGE yet
+     change of the windows (and a kill) leaves a snapshot to restore from, in a file of its
+     own, config.d/50-pys-setup.py, and only when your config has no ON_CHANGE yet. Your
+     config.py is never edited
   2. the agent skills (pys-drive, pys-restore) linked into Claude Code's skills folder
   3. a SessionStart hook in Claude Code's settings.json (a copy of it first): every session
      that starts in a pys window gets a few lines on how to behave there (instructions.py)
@@ -24,8 +24,10 @@ from pathlib import Path
 from .. import config, doctor, utf8_pipes
 from . import claude, instructions, listing
 
-ON_CHANGE_LINES = ('\n# added by `pys setup`: a snapshot at each change of the windows and '
-                   'before a kill,\n# for `pys-sessions restore` after pys died\n'
+DROP_IN = "50-pys-setup.py"
+ON_CHANGE_LINES = ('# written by `pys setup` (config.d runs after config.py, by name): a snapshot\n'
+                   '# at each change of the windows and before a kill, for `pys-sessions restore`\n'
+                   '# after pys died. Delete this file to stop it, or set ON_CHANGE in a later one.\n'
                    'ON_CHANGE = ["pys-sessions", "save", "--quiet"]\n')
 
 
@@ -41,20 +43,22 @@ def keep_copy(p: Path) -> Path:
 
 
 def step_config(do: bool) -> str:
-    p = config.path()
+    p, drop = config.path(), config.drop_in_dir() / DROP_IN
+    had = bool(config.load_config().on_change)   # the sample's own ON_CHANGE is commented out
+    steps = []
     if not p.is_file():
+        steps.append(f"write the sample to {p}")
         if do:
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(doctor.SAMPLE.read_bytes() + ON_CHANGE_LINES.encode())
-        return f"config: write the sample, with ON_CHANGE on, to {p}"
-    if config.load_config().on_change:
-        return f"config: {p} has an ON_CHANGE already; left as it is"
-    if do:
-        kept = keep_copy(p)
-        with p.open("a", encoding="utf-8") as f:
-            f.write(ON_CHANGE_LINES)
-        return f"config: kept a copy as {kept.name}, added ON_CHANGE to {p}"
-    return f"config: add ON_CHANGE (pys-sessions save) to the end of {p}, a copy kept first"
+            p.write_bytes(doctor.SAMPLE.read_bytes())
+    if had:
+        steps.append("ON_CHANGE is set already; left as it is")
+    else:
+        steps.append(f"turn on snapshots (ON_CHANGE) in {drop}")
+        if do:
+            drop.parent.mkdir(parents=True, exist_ok=True)
+            drop.write_text(ON_CHANGE_LINES, encoding="utf-8")
+    return "config: " + "; ".join(steps)
 
 
 def step_skills(do: bool) -> str:

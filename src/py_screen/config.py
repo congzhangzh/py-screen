@@ -173,17 +173,53 @@ def path() -> Path:
     return Path(base) / "pys" / "config.py"
 
 
-def load_config() -> Config:
+def drop_in_dir() -> Path:
+    """config.d beside the config (~/.config/pys/config.d): files of your own, or of a tool
+    (`pys setup`), that add to or change config.py without editing it."""
     p = path()
-    cfg = default()
-    if not p.is_file():
-        return cfg
+    return p.with_name(p.stem + ".d")
+
+
+def sources() -> list[Path]:
+    """What makes the config, in the order it runs: config.py, then config.d/*.py by name."""
+    d = drop_in_dir()
+    extra = sorted(f for f in d.glob("*.py") if f.is_file()) if d.is_dir() else []
+    return ([path()] if path().is_file() else []) + extra
+
+
+def namespace() -> tuple[dict, list[tuple[Path, BaseException]], bool]:
+    """Run the config's sources into one namespace: (names, [(file, its error)], usable).
+    Each file in config.d sees, and may change, what came before it (WIDGETS.append(…),
+    BIND[…] = …). A file that fails is left out (one level of its changes to lists and
+    dicts is undone) and named; the others still count. A config.py that fails makes the
+    whole config unusable, as before config.d: the brain then runs on its defaults."""
     ns: dict = {"cmd": cmd, "load": load, "clock": clock}
-    try:
-        exec(compile(p.read_bytes(), str(p), "exec"), ns)  # UTF-8 source, any locale
-    except Exception as e:  # a broken config must not stop the brain
-        print(f"pys: config {p}: {e!r}", file=sys.stderr)
-        cfg.error = f"config error: {type(e).__name__}"
+    errors: list[tuple[Path, BaseException]] = []
+    main = path()
+    for f in sources():
+        keep = {k: (v.copy() if isinstance(v, (list, dict)) else v) for k, v in ns.items()}
+        try:
+            exec(compile(f.read_bytes(), str(f), "exec"), ns)  # UTF-8 source, any locale
+        except Exception as e:  # a broken config must not stop the brain
+            errors.append((f, e))
+            if f == main:
+                return ns, errors, False
+            ns.clear()
+            ns.update(keep)
+    return ns, errors, True
+
+
+def load_config() -> Config:
+    cfg = default()
+    if not sources():
+        return cfg
+    ns, errors, usable = namespace()
+    for f, e in errors:
+        print(f"pys: config {f}: {e!r}", file=sys.stderr)
+    if errors:
+        cfg.error = f"config error: {type(errors[0][1]).__name__}" + \
+            (f" in {errors[0][0].name}" if errors[0][0] != path() else "")
+    if not usable:
         return cfg
     if "WIDGETS" in ns:
         cfg.widgets = list(ns["WIDGETS"])
