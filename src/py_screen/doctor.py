@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import json
 import os
 import shutil
 import sys
@@ -134,13 +135,22 @@ def cmd_check() -> int:
         except ImportError:
             r.note("psutil is not installed: the sample's cpu/mem/net/disk widgets show "
                    "nothing (uv tool install 'py-screen-mux[stats]')")
-    skills = Path.home() / ".claude" / "skills"
-    if sys.platform.startswith("linux") and skills.parent.is_dir():
-        missing = [n for n in ("pys-drive", "pys-restore") if not (skills / n).exists()]
+    from .agents import claude, instructions     # Claude Code's folder, the hook's mark
+    home = claude.home()
+    if home.is_dir():
+        missing = [n for n in ("pys-drive", "pys-restore") if not (home / "skills" / n).exists()]
         if missing:
-            r.note(f"Claude Code is here but not the skills {', '.join(missing)}: "
-                   "`pys-agents skills --install`")
+            r.note(f"Claude Code is here but not the skills {', '.join(missing)}: `pys setup`")
         else:
             r.ok("agent skills pys-drive and pys-restore are installed")
+        try:
+            hooks = json.loads((home / "settings.json").read_text(encoding="utf-8"))["hooks"]
+            hooked = instructions.MARK in json.dumps(hooks.get("SessionStart", []))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            hooked = False
+        if hooked:
+            r.ok("a claude in a pys window gets the pys instructions (SessionStart hook)")
+        else:
+            r.note("no SessionStart hook: a claude in a pys window is not told it is there; `pys setup`")
     print(f"{r.errors} error(s)" if r.errors else "no errors; C-a R (or `pys reload`) applies a change")
     return 1 if r.errors else 0

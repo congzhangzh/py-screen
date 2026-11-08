@@ -103,11 +103,18 @@ def main() -> None:
     dm.add_argument("--init", action="store_true", help="write the sample config (never over yours)")
     dm.add_argument("--reset", action="store_true",
                     help="keep yours as config.py.<time>, then write the sample")
+    su = sub.add_parser("setup", help="everything for AI agents in one step (config with "
+                        "snapshots, skills, the hook that tells each claude it is in pys); "
+                        "a dry run without --yes")
+    su.add_argument("--yes", action="store_true", help="do it")
     sub.add_parser("_keeper")
     sub.add_parser("_brain")
     a = p.parse_args()
     utf8_pipes()     # the server log too: the keeper and brain write it as stderr
 
+    if a.cmd == "setup":                         # the agent tools, imported only here
+        from .agents import setup
+        sys.exit(setup.main(["--yes"] if a.yes else []))
     if a.cmd == "doctor":
         from . import doctor
         sys.exit(doctor.cmd_init(a.reset) if a.init or a.reset else doctor.cmd_check())
