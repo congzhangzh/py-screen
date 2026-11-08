@@ -54,6 +54,13 @@ TITLE_MAX = 200                  # characters kept of a `pys title`
 OWNER_EVERY = 2.0                # seconds between checks that an agent title's owner runs
 CHANGE_DELAY = 2.0               # seconds from a window change to the server record and
                                  # ON_CHANGE: a burst (a reload, a split) gives one run
+# When the focused window ends, focus moves to another one by itself: the keys still coming
+# (the rest of the Ctrl-D that ended it, a held key) were meant for the window that ended, so
+# they are held, not sent on: for EXIT_GUARD s, longer while they keep coming in a burst (less
+# than EXIT_GUARD_GAP s apart), EXIT_GUARD_MAX s at most. A focus change you make never is.
+EXIT_GUARD = 1.0
+EXIT_GUARD_GAP = 0.4
+EXIT_GUARD_MAX = 3.0
 CAPTION_TIMEOUT = 5.0            # seconds one CAPTION update may take; then the old text stays
 HOOK_TIMEOUT = 60.0              # an ON_CHANGE run after a change is killed after this
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
@@ -237,6 +244,7 @@ class Brain:
         self.captions: dict[int, str] = {}
         self.parse_handle: asyncio.Handle | asyncio.TimerHandle | None = None
         self.last_key = 0.0                      # for KEY_GRACE
+        self.guard: dict | None = None           # keys held after the focused window ended
         self.parse_next = 0                      # round robin start, so no window starves
         self.redraw: set[int] = set()            # windows whose pane is drawn whole next frame
         self.paste_buf = ""                      # the last copy (prefix ] pastes it)
@@ -326,6 +334,7 @@ class Brain:
         return w
 
     def remove_window(self, wid: int) -> None:
+        was_focused = self.layout.focus.wid == wid
         self.wins.pop(wid, None)
         if wid in self.order:
             self.order.remove(wid)
@@ -344,8 +353,50 @@ class Brain:
             self.state_path.unlink(missing_ok=True)
             self.quit(0)
             return
+        if was_focused and self.layout.focus.wid is not None:
+            self.hold_keys(wid)
         self.changed()
         self.relayout()
+
+    def hold_keys(self, ended: int) -> None:
+        """The focused window ended: hold the keys that follow (EXIT_GUARD)."""
+        now = time.monotonic()
+        self.guard = {"ended": ended, "now": self.layout.focus.wid, "held": 0,
+                      "until": now + EXIT_GUARD, "max": now + EXIT_GUARD_MAX}
+        self.status_dirty = True
+        asyncio.get_running_loop().call_later(EXIT_GUARD + 0.05, self.guard_check)
+
+    def guard_check(self) -> None:
+        """Once the hold is over, the status line goes back to normal."""
+        g = self.guard
+        if g is None:
+            return
+        now = time.monotonic()
+        if now < g["until"] and now < g["max"]:
+            asyncio.get_running_loop().call_later(min(g["until"], g["max"]) - now + 0.05,
+                                                  self.guard_check)
+            return
+        self.guard = None
+        self.status_dirty = True
+        if self.clients:
+            self.schedule_render()
+
+    def held_key(self, data: bytes) -> bool:
+        """True when data is held back (the focused window just ended), not to be sent on."""
+        g = self.guard
+        if g is None or mouse.has_report(data):   # a click is aimed: it always goes
+            return False
+        now = time.monotonic()
+        if now >= g["until"] or now >= g["max"]:
+            return False
+        g["until"] = max(g["until"], now + EXIT_GUARD_GAP)   # the burst goes on
+        g["held"] += 1
+        if g["held"] == 1:
+            log(f"window {g['ended']} ended while focused: keys held, not sent to window {g['now']}")
+        self.status_dirty = True
+        if self.clients:
+            self.schedule_render()
+        return True
 
     def hidden_candidate(self) -> int | None:
         vis = self.visible()
@@ -646,6 +697,11 @@ class Brain:
         if c and c.mode == "resize":
             return row + "\x1b[0;30;46m" + fit(" resize: h/l width, j/k height, = equal, "
                                                "other key ends", cols) + "\x1b[0m"
+        if g := self.guard:
+            held = f"{g['held']} key{'s' if g['held'] != 1 else ''} held, " if g["held"] else ""
+            return row + "\x1b[0;30;43m" + fit(
+                f" window {g['ended']} ended: {held}keys wait a moment before they go to "
+                f"window {g['now']} ", cols) + "\x1b[0m"
         right_parts, right_w = self.status_right(cols)
         left, left_w = "\x1b[0;30;46m pys \x1b[0m", 5
         used = 0
@@ -1034,6 +1090,8 @@ class Brain:
             self.to_keeper(proto.pack(proto.DATA, self.current, data))
 
     async def keys(self, c: Client, data: bytes) -> None:
+        if self.held_key(data):
+            return
         self.last_key = time.monotonic()
         self.activate(c)          # first, so a click's coordinates are in c's layout
         if mouse.has_report(data):
