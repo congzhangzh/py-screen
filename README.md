@@ -200,6 +200,14 @@ pys doctor --init          # write the sample there; never over yours
 pys doctor --reset         # keep yours as config.py.<YYYYMMDD-HHMMSS>, then write the sample
 ```
 
+**Drop-ins:** `~/.config/pys/config.d/*.py` run after `config.py`, in name order, in the same
+namespace: a file there sets a name (`PREFIX = "C-b"`) or changes what came before
+(`WIDGETS.append(...)`, `BIND["x"] = ...`), so a machine's own lines, or a tool's, live apart
+from the config you share or replace. `pys setup` writes its ON_CHANGE to
+`config.d/50-pys-setup.py` and never edits `config.py`. A drop-in that fails is named by
+`pys doctor` (with its line) and left out; the others still count. Next to a `$PYS_CONFIG` of
+another name, the folder is `<its name>.d`.
+
 **The caption line** (the line under each pane: its number and name, then its folder) takes
 `CAPTION` in place of the folder: any object with `.every` and `async update(ctx) -> str`, run
 for each window on screen (`ctx`: `cwd`, `wid`, `pid`), at most 5 s per update.
