@@ -6,6 +6,12 @@ new config, without losing a single shell.
 
 ![A window floods two million lines, a split runs a clock, the window list opens, and `pys reload` restarts the brain while the clock keeps ticking](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo.v2.gif)
 
+With AI agents: `pys-agents` shows which window runs which Claude Code session, and after
+`pys kill` (or a crash) `pys-sessions restore` opens them all again, each with its session and
+folder ([For AI agents](#for-ai-agents)):
+
+![Two agents in pys windows; pys-agents lists them; pys kill ends everything; pys-sessions restore opens both again, each with its session and folder](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-agents.v3.gif)
+
 A terminal workspace of my own, in Python: not a clone of screen or tmux, built for fun,
 made more powerful and improved by daily use. The design is in [`spec/`](https://github.com/congzhangzh/py-screen/tree/main/spec/); the
 current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
