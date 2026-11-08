@@ -278,6 +278,23 @@ commands for them and two skills that teach an agent to use pys well. They are b
 the commands above, so the core knows nothing of them. Claude Code for now (Codex later);
 Linux, macOS and Windows (processes: `/proc` on Linux, psutil elsewhere).
 
+**All of it in one step**, the same for uvx, pip, a uv tool and the bundle:
+
+```bash
+pys setup          # what it would do
+pys setup --yes    # do it; running it again is safe
+```
+
+1. a config: the sample when you have none, with `ON_CHANGE` snapshots on (`pys-sessions
+   save`, below); a config of your own is kept, a copy first, and `ON_CHANGE` is added only
+   when it has none;
+2. the skills `pys-drive` and `pys-restore`, linked into Claude Code's `skills` folder;
+3. a `SessionStart` hook in Claude Code's `settings.json` (a copy of it first): every claude
+   that starts in a pys window is told, in a few lines, that it is in pys, which window, how
+   to name it, how to look before it types, never to `pys kill`, and how to run pys from this
+   install; outside pys it says nothing. `python -m py_screen.agents.instructions --show`
+   prints the text. A skill is read when a task calls for it; these lines are always there.
+
 ![Two agents in pys windows; pys-agents lists them; pys kill ends everything; pys-sessions restore opens both again, each with its session and folder](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-agents.v3.gif)
 
 (The agents in the demo are stand-ins that write what Claude Code writes; it is recorded in a
