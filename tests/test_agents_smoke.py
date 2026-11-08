@@ -110,6 +110,11 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
             "--enter")
         first = wait(session_files)[0]
         sid = first["sessionId"]
+        # a title no legacy code page holds all of (GBK has 管理员, not ✎; cp1252 neither):
+        # snapshots, `pys ls` and the restore launcher must go through UTF-8 on every OS
+        title = "管理员 ✎ build"
+        pys("title", "--wid", str(wid), title)
+        assert [w["name"] for w in windows()] == [title]
 
         rows = agents()
         assert [r["window"] for r in rows] == [wid], rows
@@ -121,6 +126,7 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
 
         sessions("save")
         snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text(encoding="utf-8"))
+        assert snap["windows"][0]["title"] == title or title in json.dumps(snap, ensure_ascii=False)
         ag = snap["windows"][0]["agent"]
         assert ag["kind"] == "claude" and ag["session"] == sid
         assert ag["env"] == {"MY_VAR": "kept"}
@@ -143,6 +149,7 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
         assert "--secret-flag" not in argv                        # only the flags it knows
         assert procs.environ(again["pid"], ["MY_VAR"]) == {"MY_VAR": "kept"}
         assert [r["window"] for r in agents()] == [w["wid"] for w in windows()]
+        assert [w["name"] for w in windows()] == [f"↺{title}"]       # its old title, marked
 
         # the agent ends: the user's shell is left in the window, in the same folder
         os.kill(again["pid"], 9) if not WIN else subprocess.run(
