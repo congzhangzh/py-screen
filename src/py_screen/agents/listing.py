@@ -130,10 +130,8 @@ def cmd_where(a) -> int:
 
 
 def short_path(p: str | None) -> str:
-    if not p:
-        return "-"
-    home = str(Path.home())
-    return "~" + p[len(home):] if p == home or p.startswith(home + "/") else p
+    from ..config import home_path
+    return home_path(p) or "-"
 
 
 def kilo(n: int | None) -> str:

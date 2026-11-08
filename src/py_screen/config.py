@@ -41,6 +41,17 @@ from . import platform
 _CTRL = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x1f\x7f]")
 
 
+def home_path(p: str | None) -> str:
+    """A folder as shown on screen: `~/x` below the home folder, else as it is ("" for None).
+    Only for showing: `pys ls --json` and every hook keep the real path."""
+    if not p:
+        return ""
+    home = os.path.expanduser("~")
+    if home in ("", "/", os.sep) or not (p == home or p.startswith(home.rstrip(os.sep) + os.sep)):
+        return p
+    return "~" + p[len(home.rstrip(os.sep)):]
+
+
 def clean(text: str) -> str:
     """One line of printable text: control characters and escape sequences dropped."""
     return _CTRL.sub("", text.splitlines()[0] if text else "").strip()

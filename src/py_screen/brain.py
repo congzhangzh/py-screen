@@ -600,7 +600,7 @@ class Brain:
             label += f"[{w.scroll}/{w.term.history}] "
         # after the name: the config's CAPTION for this window (e.g. where an agent in it
         # really works), else, and until its first update, the folder of its shell
-        rest = f" {w.info if w.info is not None else (w.cwd() or '')} " if w else ""
+        rest = f" {w.info if w.info is not None else cfgmod.home_path(w.cwd())} " if w else ""
         focused = p is self.layout.focus
         a, b = ("\x1b[0;30;43m", "\x1b[0;33;40m") if focused else ("\x1b[0;37;100m", "\x1b[0;90;40m")
         pw = p.w if vc is None else min(p.w, vc - p.x)
@@ -702,7 +702,7 @@ class Brain:
         rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
             w = self.wins[wid]
-            rows.append((i, fit(f" {wid:>3}  {fit(w.name, 24)} {w.cwd() or ''}", c.cols)))
+            rows.append((i, fit(f" {wid:>3}  {fit(w.name, 24)} {cfgmod.home_path(w.cwd())}", c.cols)))
         out = [f"\x1b[1;1H\x1b[0;30;46m{rows[0]}\x1b[0m"]
         for y, (i, text) in enumerate(rows[1:area], start=1):
             attr = "\x1b[0;30;43m" if i == c.list_idx else "\x1b[0m"
@@ -713,15 +713,11 @@ class Brain:
 
     def help_sections(self, c: Client) -> list[list[str]]:
         """The help as sections: the windows first (what you'd switch to), then the keys."""
-        home = os.path.expanduser("~")
         wins = [" windows (a digit or a click selects one)"]
         for wid in self.order:
             w = self.wins[wid]
             flag = "*" if wid == self.current else ("-" if wid == self.last else " ")
-            cwd = w.cwd() or ""
-            if home != "/" and (cwd == home or cwd.startswith(home + "/")):
-                cwd = "~" + cwd[len(home):]
-            wins.append(f"   {wid:>2}{flag} {fit(w.name, 20)} {cwd}")
+            wins.append(f"   {wid:>2}{flag} {fit(w.name, 20)} {cfgmod.home_path(w.cwd())}")
         pfx = "C-" + chr(c.prefix + 0x60) if c.prefix < 0x1B else "C-" + chr(c.prefix + 0x40)
         out = [wins, [f" keys: prefix {pfx}, then"] + [f"   {k:<23} {v}" for k, v in HELP]]
         if self.cfg.bind:
