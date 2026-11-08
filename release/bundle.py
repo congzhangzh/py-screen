@@ -41,8 +41,12 @@ while [ -L "$self" ]; do
     case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
 done
 here=$(cd "$(dirname "$self")/.." && pwd)
-exec "$here/python/bin/python3" -m py_screen "$@"
+exec "$here/python/bin/python3" -m MODULE "$@"
 """
+# bin/<name> → the module it runs; the agent tools read /proc, so Linux only
+LAUNCHERS = {"pys": "py_screen", "pys-agents": "py_screen.agents.listing",
+             "pys-sessions": "py_screen.agents.sessions"}
+LINUX_ONLY = {"pys-agents", "pys-sessions"}
 
 LAUNCHER_CMD = """@"%~dp0python\\python.exe" -m py_screen %*\r\n"""
 
@@ -156,7 +160,7 @@ def main() -> None:
             "--compile-bytecode", f"py-screen-mux[stats]=={a.version}")
         # pip's console scripts (python/bin/pys, python/Scripts/pys.exe) hold this temp
         # folder's absolute path: drop them, the launcher below is the way in
-        for script in [py_dir / "bin" / "pys", py_dir / "Scripts"]:
+        for script in [*(py_dir / "bin" / n for n in LAUNCHERS), py_dir / "Scripts"]:
             if script.is_dir():
                 shutil.rmtree(script)
             elif script.exists():
@@ -174,9 +178,12 @@ def main() -> None:
             site, pylicense = "Lib/site-packages", "LICENSE.txt"
         else:
             (root / "bin").mkdir()
-            launcher = root / "bin" / "pys"
-            launcher.write_text(LAUNCHER_SH)
-            launcher.chmod(0o755)
+            for n, module in LAUNCHERS.items():
+                if n in LINUX_ONLY and not sys.platform.startswith("linux"):
+                    continue
+                launcher = root / "bin" / n
+                launcher.write_text(LAUNCHER_SH.replace("MODULE", module))
+                launcher.chmod(0o755)
             run_cmd, bindir = "bin/pys", "bin/"
             link = ", or link it: ln -s \"$PWD/bin/pys\" ~/.local/bin/pys"
             pip = "python/bin/python3 -m pip"

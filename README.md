@@ -30,6 +30,8 @@ ready-to-use bundle per system, with its own Python inside: unpack it and run `b
 - **Made to be driven by scripts and agents.** `pys ls --json`, `pys send`, `pys capture`
   and `pys title` (a window names itself, and a rename by hand still wins) make every window
   readable and writable from outside. An app's OSC 52 copy reaches your clipboard.
+  For Claude Code there is more: `pys-agents` shows which window runs which session, and
+  `pys-sessions` brings them all back after pys died (see [For AI agents](#for-ai-agents)).
 - **Configured in Python.** `~/.config/pys/config.py` adds status widgets and key bindings
   (`pys sample-config` prints a starting point).
 - **Linux, macOS and Windows** (ConPTY), with wheels for six systems, each one tested on
@@ -220,8 +222,8 @@ were, so a tool can bring them back:
   `agent_owner`. One file per server life, rewritten whole (tmp + rename), never deleted.
 
 ```python
-ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # your own script: e.g. one that keeps each
-                                                  # window's folder, agent session and screen
+ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # comes with pys (below), or a script of
+                                                  # your own: an argv list
 KILL_HOOK_TIMEOUT = 5
 ```
 
@@ -232,6 +234,66 @@ Each window gets `PYS_WINDOW` (its number) and `PYS_SESSION` (its server's dir).
 typed in a window of the same session refuses to attach: the session would show inside
 itself and the keys would loop between the window and the server. Another session
 (`PYS_DIR=<dir> pys`) may be nested; give it its own prefix (`PYS_PREFIX`).
+
+## For AI agents
+
+Agents such as Claude Code often run in pys windows, several at a time. pys comes with two
+commands for them and two skills that teach an agent to use pys well. They are built only on
+the commands above, so the core knows nothing of them. Claude Code for now (Codex later);
+Linux for now (they read `/proc`).
+
+![Two agents in pys windows; pys-agents lists them; pys kill ends everything; pys-sessions restore opens both again, each with its session and folder](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-agents.v3.gif)
+
+(The agents in the demo are stand-ins that write what Claude Code writes; it is recorded in a
+container with `docs/record-demo-agents.sh`.)
+
+**`pys-agents`**: every running claude, the window it runs in, and how it is doing:
+
+```
+$ pys-agents
+WIN  TITLE              STATE  CTX   COMPACT  MODEL     NAME      FOLDER
+0    review PR 42       idle   237k  0        opus-5-5  reviewer  ~/src/app
+2    build fix          busy   844k  1        opus-5-5  builder   ~/src/app
+-    -                  idle   12k   0        opus-5-5  -         ~/notes
+```
+
+CTX is what the last call held (input, cache read and written, from the transcript), COMPACT
+the compactions so far; a claude outside pys shows window `-`. `--json` gives one object per
+claude (`window`, `pid`, `session`, `name`, `state`, `cwd`, `context_tokens`, `model`,
+`compactions`, and `titled_by_it` when it named its window with `pys title --owner`).
+
+**`pys-sessions`**: keep what every window is, and open it all again after pys died (a
+kill, a crash, a reboot):
+
+```python
+# ~/.config/pys/config.py
+ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # a snapshot at each change and before a kill
+SESSIONS_KEEP_ENV = []    # variables of a claude's environment its resume gets back
+```
+
+| Command | What it does |
+|---|---|
+| `pys-sessions save` | snapshot each window: folder, titles, the Claude Code session in it with the flags it was started with, the last 3000 lines of its screen; only when something changed, or every 2 h |
+| `pys-sessions list` / `show [SNAP]` | the snapshots, what one holds |
+| `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then each window again: `claude <its flags> --resume <id>`, or a shell in its folder; title `↺<old title>` until the agent sets its own |
+| `pys-sessions forensic [--write]` | no snapshot of the dead server? rebuild it from its server record (folders, titles) and from what Claude Code leaves behind (sockets, transcripts), with a `why` per window |
+| `pys-sessions install` | a systemd user timer running `save` every 2 minutes, besides ON_CHANGE |
+
+Snapshots go to `~/.local/state/pys-sessions/<YYYYMMDD-HHMMSS>/` (`PYS_SESSIONS_DIR`) and are
+never deleted or overwritten.
+
+**Skills.** `pys-agents skills --install` links them into `~/.claude/skills` (one of the same
+name that is already there is left alone):
+
+- `pys-drive`: name your window, find the other sessions, read a window, type into one only
+  when it is idle (text, then Enter on its own: an Enter inside a paste is a new line), never
+  `pys kill`, test pys on a second server.
+- `pys-restore`: bring the windows back after pys died, step by step, showing the plan first.
+
+Both commands read Claude Code's own files (`~/.claude/sessions/<pid>.json`, the transcripts
+under `~/.claude/projects/`; `CLAUDE_CONFIG_DIR` moves them). Those are not a documented
+interface, so the reads are defensive: after a Claude Code update a field may show `-`
+until pys catches up.
 
 ## How it works
 
