@@ -246,9 +246,13 @@ class Clock:
         return time.strftime(self.fmt)
 
 
+# The focused window's git branch, worktree and changes ("fix-x wt 2 mod ↑1"); for a window
+# with a Claude Code session in it, ✎ and the repo it last wrote in, not where it started.
+from py_screen.agents.widget import branch
+
 # Shown right to left as room allows: when the line is short, the first ones drop.
 WIDGETS = [
-    cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10),   # focused dir's branch
+    branch(),                          # or cmd(["git", "-C", "{cwd}", "branch", "--show-current"])
     Cpu(),
     Mem(),
     Net(),

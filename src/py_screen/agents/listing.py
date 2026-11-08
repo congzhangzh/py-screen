@@ -75,20 +75,16 @@ def where() -> list[dict]:
         pid = next((p for p in tree if p in live), None)
         s = live.get(pid) if pid else None
         cwd = (s or {}).get("cwd") or procs.cwd(w["pid"]) or w.get("cwd")
-        recent = claude.recent_dirs(claude.transcript(s.get("sessionId", "")), cwd) if s else []
-        rows.append({"window": w["wid"], "title": w.get("name"), "cwd": cwd, "recent": recent,
+        rows.append({"window": w["wid"], "title": w.get("name"), "cwd": cwd, "session": s,
                      "agent": {"kind": "claude", "pid": pid, "name": s.get("name"),
                                "session": s.get("sessionId"), "state": s.get("status")}
                      if s else None})
     def works_in(r: dict) -> str:
         """An agent works where it last wrote inside a repo (its own words: the transcript);
         else, and for a plain window, its folder."""
-        for d in r.pop("recent"):
-            if (pl := gitinfo.place(d)) is not None:
-                r["works_in"] = pl["top"]
-                return pl["top"]
-        r["works_in"] = None
-        return r["cwd"]
+        pl = claude.works_in(s) if (s := r.pop("session")) else None
+        r["works_in"] = pl and pl["top"]
+        return r["works_in"] or r["cwd"]
 
     with ThreadPoolExecutor(max_workers=8) as ex:
         folders = list(ex.map(works_in, rows))

@@ -136,3 +136,13 @@ def recent_dirs(path: Path | None, cwd: str | None = None) -> list[str]:
             if d and d not in out:
                 out.append(os.path.normpath(d))
     return out
+
+
+def works_in(session: dict) -> dict | None:
+    """The git place (gitinfo.place) of a claude's latest writes inside a repo, newest first;
+    None when it wrote nowhere in a repo yet. One rule for `where`, `save` and the widget."""
+    from . import gitinfo
+    for d in recent_dirs(transcript(session.get("sessionId") or ""), session.get("cwd")):
+        if (pl := gitinfo.place(d)) is not None:
+            return pl
+    return None

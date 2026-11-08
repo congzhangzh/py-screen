@@ -927,7 +927,11 @@ class Brain:
         while True:
             try:
                 fw = self.focused_window()
-                text = await wd.update({"cwd": fw.cwd() if fw else None})
+                # the focused window: its folder, and its number and process for a widget
+                # that looks deeper (py_screen.agents.widget.branch follows an agent in it)
+                text = await wd.update({"cwd": fw.cwd() if fw else None,
+                                        "wid": fw.wid if fw else None,
+                                        "pid": fw.pid if fw else None})
             except Exception as e:  # a widget never takes the brain down
                 text = f"!{type(e).__name__}"
             if text != wd.text:

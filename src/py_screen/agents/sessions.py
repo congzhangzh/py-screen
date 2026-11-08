@@ -25,6 +25,9 @@ In ~/.config/pys/config.py:
 
 Codex sessions are saved and resumed too (`codex resume`), untested: Claude Code is the
 supported agent for now.
+
+Agent skill: `pys-restore` teaches an agent this whole flow (save, show, the dry run, restore);
+`pys-agents skills --install` links it, with `pys-drive`, into ~/.claude/skills.
 """
 from __future__ import annotations
 
@@ -176,12 +179,9 @@ def cmd_save(a) -> int:
         # where the work was: repo, branch, HEAD, worktree (cheap: no `git status`, so it fits
         # in the kill hook). For an agent, the repo of its latest writes (its transcript): it
         # resumes in the folder it started in, but that is not always where it worked
-        if agent and agent["kind"] == "claude":
-            t = claude.transcript(agent.get("session") or "")
-            for d in claude.recent_dirs(t, agent.get("cwd")):
-                if (pl := gitinfo.place(d)) is not None:
-                    w_["works_in"], w_["git"] = pl["top"], pl
-                    break
+        if agent and agent["kind"] == "claude" and (pl := claude.works_in(
+                {"sessionId": agent.get("session"), "cwd": agent.get("cwd")})):
+            w_["works_in"], w_["git"] = pl["top"], pl
         if "git" not in w_:
             w_["git"] = gitinfo.place((agent or {}).get("cwd") or cwd)
     sig_src = [(w["wid"], w["cwd"], w["name"], (w["agent"] or {}).get("session"),
@@ -324,6 +324,14 @@ def window_cmd(w: dict, snapdir: Path) -> str:
     return "; ".join(parts)
 
 
+def titled_by_agent(wid: int) -> bool:
+    try:
+        ws = json.loads(pys("ls", "--json"))["windows"]
+    except (RuntimeError, ValueError):
+        return False
+    return any(x["wid"] == wid and x.get("agent_title") for x in ws)
+
+
 def cmd_restore(a) -> int:
     s = pick(a.snap)
     d = json.loads((s / "windows.json").read_text())
@@ -358,9 +366,10 @@ def cmd_restore(a) -> int:
         after = json.loads(pys("ls", "--json"))["windows"]
         new = [x for x in after if x["wid"] not in before]
         t = label(w)
-        if new and t:
+        if new and t and not titled_by_agent(new[0]["wid"]):
             # owned by the new window's shell: it lasts while the window does, and the
-            # resumed agent replaces it with its own title when it sets one
+            # resumed agent replaces it with its own title when it sets one. Not when the
+            # agent was faster and named the window already: its own title is the truth
             pys("title", "--wid", str(new[0]["wid"]), "--owner", str(new[0]["pid"]),
                 f"↺{t}"[:28], check=False)
         print(f"  opened win {new[0]['wid'] if new else '?'} for old win {w['wid']} ({t})")

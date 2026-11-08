@@ -36,6 +36,10 @@ os.makedirs(f"{home}/sessions", exist_ok=True)
 with open(f"{home}/sessions/{os.getpid()}.json", "w") as f:
     json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": name,
                "status": "idle", "entrypoint": "cli"}, f)
+if t := os.environ.get("FAKE_TITLE"):          # an agent that names its window at once
+    import subprocess
+    subprocess.run([os.environ["PYS_PY"], "-m", "py_screen", "title", "--owner",
+                    str(os.getpid()), t], check=False)
 print("fake claude", sid, flush=True)
 time.sleep(600)
 '''
@@ -295,5 +299,65 @@ def test_a_snapshot_keeps_where_the_agent_worked(tmp_path: Path) -> None:
         subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)], check=True)
         dry = run(sess, "sessions", "restore").stdout
         assert f"folder gone: {wt} (where it worked)" in dry and "worktree add" in dry
+    finally:
+        sess.kill()
+
+
+def test_branch_widget_follows_the_agent(tmp_path: Path, monkeypatch) -> None:
+    from py_screen.agents import widget
+    sess = setup(tmp_path, "bw")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", sess.env["CLAUDE_CONFIG_DIR"])
+    repo, wt = make_repo(tmp_path)
+    try:
+        assert widget.describe({"cwd": str(repo)}) == "main"
+        (repo / "a.txt").write_text("changed\n")
+        assert widget.describe({"cwd": str(repo)}) == "main 1 mod"
+        assert widget.describe({"cwd": str(tmp_path)}) == ""            # no repo: nothing
+        win = start_claude(sess, repo, "--name", "helper")
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
+        with t.open("a") as f:
+            f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
+                    "name": "Edit", "input": {"file_path": str(wt / "a.txt")}}]}}) + "\n")
+        # the window's shell sits in repo (main); the agent in it works in the worktree
+        assert widget.describe({"cwd": str(repo), "pid": win["pid"]}) == "✎topic wt"
+    finally:
+        sess.kill()
+
+
+def test_a_widget_gets_the_focused_windows_wid_and_pid(tmp_path: Path) -> None:
+    out = tmp_path / "ctx.json"
+    sess = setup(tmp_path, "cx", f"""import json
+class Probe:
+    every, text = 0.3, ""
+    async def update(self, ctx):
+        open({str(out)!r}, "w").write(json.dumps(ctx))
+        return ""
+WIDGETS = [Probe()]
+""")
+    try:
+        subprocess.run(PYS + ["new", "sleep", "600"], env=sess.env, cwd=tmp_path, check=True,
+                       capture_output=True, timeout=15)
+        w = json.loads(sess.pys("ls", "--json"))["windows"][0]
+        ctx = wait(lambda: out.exists() and (d := json.loads(out.read_text())).get("pid") and d)
+        assert ctx == {"cwd": str(tmp_path.resolve()), "wid": w["wid"], "pid": w["pid"]}
+    finally:
+        sess.kill()
+
+
+def test_restore_leaves_an_agents_own_title(tmp_path: Path) -> None:
+    sess = setup(tmp_path, "rt")
+    sess.env.update(FAKE_TITLE="own title", PYS_PY=sys.executable)
+    try:
+        win = start_claude(sess, tmp_path / "work", "--name", "helper")
+        wait(lambda: [x for x in json.loads(sess.pys("ls", "--json"))["windows"]
+                      if x["name"] == "own title"])
+        run(sess, "sessions", "save")
+        sess.pys("kill", check=False)
+        wait(lambda: not (sess.dir / "keeper.sock").exists())
+        run(sess, "sessions", "restore", "--yes")
+        time.sleep(1.5)                     # both writers are done by now, in either order
+        names = [x["name"] for x in json.loads(sess.pys("ls", "--json"))["windows"]]
+        assert names == ["own title"]
     finally:
         sess.kill()

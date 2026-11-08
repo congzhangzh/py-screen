@@ -42,6 +42,9 @@ _CTRL = re.compile(r"[\x00-\x1f\x7f]|\x1b\[[0-9;?]*[A-Za-z]")
 
 @dataclass
 class Widget:
+    """A status-line item: `update(ctx)` is awaited every `every` seconds and returns its
+    text. ctx is the focused window: `cwd` (its folder), `wid`, `pid` (its process); all None
+    when no window has focus."""
     every: float = 5.0
     text: str = ""
 

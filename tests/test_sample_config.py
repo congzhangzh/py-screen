@@ -33,7 +33,7 @@ def test_sample_loads(monkeypatch):
     monkeypatch.setenv("PYS_CONFIG", str(SAMPLE))
     cfg = config.load_config()
     assert cfg.error is None
-    assert [type(w).__name__ for w in cfg.widgets] == ["Cmd", "Cpu", "Mem", "Net", "Disk", "Space", "Load", "Clock"]
+    assert [type(w).__name__ for w in cfg.widgets] == ["Branch", "Cpu", "Mem", "Net", "Disk", "Space", "Load", "Clock"]
     assert "T" in cfg.bind
 
 

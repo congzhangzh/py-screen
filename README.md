@@ -194,8 +194,12 @@ SCROLLBACK = 5000                 # rows of history per window; 0 = none
 
 `pys sample-config` prints a fuller sample to start from (`pys sample-config >
 ~/.config/pys/config.py`): CPU, memory and network (down/up in kB/s) widgets and a clock
-that ticks on each second, written in the config itself. A widget is any object with
-`.every`, `.text` and `async update(ctx) -> str`, so new ones need no change to pys.
+that ticks on each second, written in the config itself, and `branch()` from
+`py_screen.agents.widget`: the focused window's git branch, worktree and changes, and for a
+window with an agent in it, the repo the agent last wrote in (✎, see
+[For AI agents](#for-ai-agents)). A widget is any object with `.every`, `.text` and
+`async update(ctx) -> str`, so new ones need no change to pys; `ctx` is the focused window:
+`cwd`, `wid` and `pid` (its process).
 CPU, memory, network and disk (read/write in kB/s) read `/proc` on Linux; on macOS and
 Windows they use psutil (`uv tool install 'py-screen-mux[stats]'`) and show nothing without it.
 
