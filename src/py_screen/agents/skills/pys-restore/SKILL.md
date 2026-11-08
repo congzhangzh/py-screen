@@ -28,7 +28,8 @@ pys keeps its windows in memory. What outlives it:
    *earlier* pys server. No snapshot of the dead server, or one older than the loss? Run
    `pys-sessions forensic` and read every `why` line before you trust it; `--write` saves it.
 3. `pys-sessions restore <SNAP>` (the dry run) → show the user the table: old window → folder,
-   title, session. Say for each row whether it comes from a snapshot (sure) or forensic (a
+   title, session, and the git branch it was on. A `⚠ folder gone` line means a worktree was
+   removed since: it prints the `git worktree add` that brings it back; ask before running it. Say for each row whether it comes from a snapshot (sure) or forensic (a
    guess with evidence).
 4. On the user's go (or when they asked for the restore in so many words), add `--yes`;
    `--only` leaves out windows they don't want.

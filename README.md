@@ -262,6 +262,30 @@ the compactions so far; a claude outside pys shows window `-`. `--json` gives on
 claude (`window`, `pid`, `session`, `name`, `state`, `cwd`, `context_tokens`, `model`,
 `compactions`, and `titled_by_it` when it named its window with `pys title --owner`).
 
+**`pys-agents where`**: every window, agent or not, with the git state of its folder:
+
+```
+$ pys-agents where
+WIN  TITLE         FOLDER              BRANCH                       STATE        AGENT
+0    review PR 42  ~/src/app           main @a96cd56                clean ↑2     claude reviewer (idle)
+1    build fix     ✎ ~/src/app-fix     fix-build @1f0e2c1 (wt)      1 mod 3 new  claude builder (busy)
+2    -             ~/notes             -                            -            -
+✎ = the repo of the agent's latest writes (its transcript), not the folder it started in
+(wt) = a linked worktree (git worktree add) of that repo
+```
+
+An agent's folder is not where it works: Claude Code keeps the folder it was started in, its
+tools take absolute paths anywhere, and its Bash shell goes back to the start folder after
+every command. So for an agent, `where` looks at what it did: the files it last wrote (Write,
+Edit) and the `cd <dir> && …` its Bash commands start with, newest first, and shows the first
+one inside a git repo (✎). A Read is not work, and a folder outside any repo is skipped.
+`--json` keeps both: `cwd` (where it started) and `works_in`.
+
+STATE is `git status` against the upstream (↑ ahead, ↓ behind, as of the last fetch); git runs
+with `--no-optional-locks`, so it never takes the index lock from under you. `--json` gives
+`git: {repo, top, common, worktree, branch, head, changed, untracked, ahead, behind}` per
+window.
+
 **`pys-sessions`**: keep what every window is, and open it all again after pys died (a
 kill, a crash, a reboot):
 
@@ -273,9 +297,9 @@ SESSIONS_KEEP_ENV = []    # variables of a claude's environment its resume gets 
 
 | Command | What it does |
 |---|---|
-| `pys-sessions save` | snapshot each window: folder, titles, the Claude Code session in it with the flags it was started with, the last 3000 lines of its screen; only when something changed, or every 2 h |
+| `pys-sessions save` | snapshot each window: folder, titles, git repo / branch / HEAD / worktree, the Claude Code session in it with the flags it was started with, the last 3000 lines of its screen; for an agent, also where it worked (`works_in`, as in `where`); only when something changed, or every 2 h |
 | `pys-sessions list` / `show [SNAP]` | the snapshots, what one holds |
-| `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then each window again: `claude <its flags> --resume <id>`, or a shell in its folder; title `↺<old title>` until the agent sets its own |
+| `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then each window again: `claude <its flags> --resume <id>`, or a shell in its folder; title `↺<old title>` until the agent sets its own. The dry run says which branch each window was on, and when a worktree's folder is gone since, the `git worktree add` that brings it back |
 | `pys-sessions forensic [--write]` | no snapshot of the dead server? rebuild it from its server record (folders, titles) and from what Claude Code leaves behind (sockets, transcripts), with a `why` per window |
 | `pys-sessions install` | a systemd user timer running `save` every 2 minutes, besides ON_CHANGE |
 

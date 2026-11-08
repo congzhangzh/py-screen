@@ -26,6 +26,7 @@ changes. A title the user set by hand (prefix `,`) wins over yours; leave it alo
 |---|---|
 | `pys-agents` | every running claude: window, title, state (busy / idle), context size, compactions, model, name, folder |
 | `pys-agents --json` | the same as JSON |
+| `pys-agents where` | every window: folder, git branch @HEAD, `(wt)` for a linked worktree, changes (`1 mod 3 new ↑2`), the agent in it; `--json` too. Look here before you work in a repo another window works in: two agents on one worktree step on each other |
 | `pys ls --json` | every window: `wid`, `pid` (its shell), `cmd`, `cwd`, `name` (what shows), `title`, `agent_title`, `app_title`, `agent_owner` |
 | `pys capture <wid>` | the window's screen now, as text; `--history` adds the scrollback, `--json` the cursor too |
 
