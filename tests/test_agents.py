@@ -190,3 +190,110 @@ def test_a_zombie_is_not_alive() -> None:
         assert procs.alive(os.getpid())
     finally:
         p.wait()
+
+
+def make_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """A repo on `main` with one commit, and a linked worktree of it on branch `topic`."""
+    repo, wt = tmp_path / "repo", tmp_path / "repo-topic"
+    g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*g, "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "a.txt").write_text("a\n")
+    subprocess.run([*g, "-C", str(repo), "add", "a.txt"], check=True)
+    subprocess.run([*g, "-C", str(repo), "commit", "-q", "-m", "one"], check=True)
+    subprocess.run([*g, "-C", str(repo), "worktree", "add", "-q", "-b", "topic", str(wt)], check=True)
+    return repo, wt
+
+
+def open_in(sess: Session, folder: Path) -> int:
+    subprocess.run(PYS + ["new", "sleep", "600"], env=sess.env, cwd=folder, check=True,
+                   capture_output=True, timeout=15)
+    return max(w["wid"] for w in json.loads(sess.pys("ls", "--json"))["windows"])
+
+
+def test_where_shows_branch_worktree_and_changes(tmp_path: Path) -> None:
+    sess = setup(tmp_path, "wh")
+    repo, wt = make_repo(tmp_path)
+    (wt / "a.txt").write_text("changed\n")
+    (wt / "new.txt").write_text("new\n")
+    try:
+        a, b = open_in(sess, repo), open_in(sess, wt)
+        rows = {r["window"]: r for r in json.loads(run(sess, "listing", "where", "--json").stdout)}
+        ga, gb = rows[a]["git"], rows[b]["git"]
+        assert ga["branch"] == "main" and not ga["worktree"] and ga["changed"] == 0
+        assert gb["branch"] == "topic" and gb["worktree"] and gb["repo"] == "repo"
+        assert gb["changed"] == 1 and gb["untracked"] == 1 and gb["head"] == ga["head"]
+        table = run(sess, "listing", "where").stdout
+        assert "topic @" in table and "(wt)" in table and "1 mod 1 new" in table
+    finally:
+        sess.kill()
+
+
+def test_restore_says_which_branch_and_when_its_worktree_is_gone(tmp_path: Path) -> None:
+    sess = setup(tmp_path, "wg")
+    repo, wt = make_repo(tmp_path)
+    try:
+        b = open_in(sess, wt)
+        run(sess, "sessions", "save")
+        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text())
+        g = [w for w in snap["windows"] if w["wid"] == b][0]["git"]
+        assert g["branch"] == "topic" and g["worktree"]
+        sess.pys("kill", check=False)
+        wait(lambda: not (sess.dir / "keeper.sock").exists())
+        subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)], check=True)
+        dry = run(sess, "sessions", "restore").stdout
+        assert "worktree of repo, branch topic @" in dry
+        assert f"folder gone: {wt}" in dry and "worktree add" in dry
+        # the hint works as printed: the folder comes back on its branch
+        hint = dry.split("to bring it back: ", 1)[1].splitlines()[0]
+        subprocess.run(hint, shell=True, check=True, capture_output=True)
+        assert (wt / "a.txt").exists()
+    finally:
+        sess.kill()
+
+
+def test_where_follows_the_agents_writes_not_the_folder_it_started_in(tmp_path: Path) -> None:
+    """A claude started in the main checkout that edits files in a worktree works in the
+    worktree: its transcript says so; its process folder never changes."""
+    sess = setup(tmp_path, "wi")
+    repo, wt = make_repo(tmp_path)
+    try:
+        win = start_claude(sess, repo, "--name", "helper")
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
+        use = lambda name, inp: json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": name, "input": inp}]}}) + "\n"
+        with t.open("a") as f:
+            f.write(use("Bash", {"command": f"cd {tmp_path} && ls"}))         # no repo: skipped
+            f.write(use("Edit", {"file_path": str(wt / "a.txt")}))
+            f.write(use("Read", {"file_path": str(repo / "a.txt")}))           # a read is no work
+        r = [x for x in json.loads(run(sess, "listing", "where", "--json").stdout)
+             if x["window"] == win["wid"]][0]
+        assert r["cwd"] == str(repo.resolve())
+        assert r["works_in"] == str(wt.resolve()) and r["git"]["branch"] == "topic"
+        assert "✎" in run(sess, "listing", "where").stdout
+    finally:
+        sess.kill()
+
+
+def test_a_snapshot_keeps_where_the_agent_worked(tmp_path: Path) -> None:
+    sess = setup(tmp_path, "sw")
+    repo, wt = make_repo(tmp_path)
+    try:
+        win = start_claude(sess, repo, "--name", "helper")
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
+        with t.open("a") as f:
+            f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
+                    "name": "Write", "input": {"file_path": str(wt / "b.txt")}}]}}) + "\n")
+        run(sess, "sessions", "save")
+        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text())
+        w = [x for x in snap["windows"] if x["wid"] == win["wid"]][0]
+        assert w["works_in"] == str(wt.resolve()) and w["git"]["branch"] == "topic"
+        assert w["agent"]["cwd"] == str(repo.resolve())      # it resumes where it started
+        sess.pys("kill", check=False)
+        wait(lambda: not (sess.dir / "keeper.sock").exists())
+        subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)], check=True)
+        dry = run(sess, "sessions", "restore").stdout
+        assert f"folder gone: {wt} (where it worked)" in dry and "worktree add" in dry
+    finally:
+        sess.kill()

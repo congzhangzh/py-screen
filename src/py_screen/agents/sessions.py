@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .. import config, proto
-from . import claude, procs
+from . import claude, gitinfo, procs
 from .procs import pys
 
 HOME = Path.home()
@@ -166,13 +166,26 @@ def cmd_save(a) -> int:
     wins = []
     for w in info["windows"]:
         agent, fg = agent_in(w["pid"], kids, keys)
+        cwd = procs.cwd(w["pid"]) or w.get("cwd")
         wins.append({
             "wid": w["wid"], "name": w.get("name"), "title": w.get("title"),
             "agent_title": w.get("agent_title"), "cmd": w.get("cmd"),
-            "cwd": procs.cwd(w["pid"]) or w.get("cwd"), "shell_pid": w["pid"],
-            "foreground": fg, "agent": agent,
+            "cwd": cwd, "shell_pid": w["pid"], "foreground": fg, "agent": agent,
         })
-    sig_src = [(w["wid"], w["cwd"], w["name"], (w["agent"] or {}).get("session")) for w in wins]
+        w_ = wins[-1]
+        # where the work was: repo, branch, HEAD, worktree (cheap: no `git status`, so it fits
+        # in the kill hook). For an agent, the repo of its latest writes (its transcript): it
+        # resumes in the folder it started in, but that is not always where it worked
+        if agent and agent["kind"] == "claude":
+            t = claude.transcript(agent.get("session") or "")
+            for d in claude.recent_dirs(t, agent.get("cwd")):
+                if (pl := gitinfo.place(d)) is not None:
+                    w_["works_in"], w_["git"] = pl["top"], pl
+                    break
+        if "git" not in w_:
+            w_["git"] = gitinfo.place((agent or {}).get("cwd") or cwd)
+    sig_src = [(w["wid"], w["cwd"], w["name"], (w["agent"] or {}).get("session"),
+                (w["git"] or {}).get("branch")) for w in wins]
     sig = hashlib.sha256(json.dumps([info["pid"], sig_src]).encode()).hexdigest()[:16]
     snaps = snapshots()
     if snaps:
@@ -258,6 +271,10 @@ def cmd_show(a) -> int:
     for w in d["windows"]:
         print(f"  win {w['wid']:>2}  {label(w)[:26]:<26} {w.get('cwd') or '?'}")
         print(f"          {describe(w)}")
+        if g := gitinfo.describe(w.get("git")):
+            print(f"          git: {g}")
+        if gone := folder_gone(w):
+            print(f"          ⚠ {gone}")
         if w.get("why"):
             print(f"          why: {w['why']}")
         if w.get("screen"):
@@ -268,6 +285,21 @@ def cmd_show(a) -> int:
 # ---- restore --------------------------------------------------------------------
 def live_agent_sessions() -> set[str]:
     return {d["sessionId"] for d in claude.live_sessions().values()}
+
+
+def folder_gone(w: dict) -> str:
+    """A warning when the window's folder no longer exists (a worktree removed since): the
+    window then opens in ~, and for a worktree we say how to bring the folder back."""
+    start = (w.get("agent") or {}).get("cwd") or w.get("cwd")
+    cwd = next((d for d in (start, w.get("works_in")) if d and not os.path.isdir(d)), None)
+    if not cwd:
+        return ""
+    msg = f"folder gone: {cwd}" + (" (opens in ~)" if cwd == start else " (where it worked)")
+    g = w.get("git") or {}
+    if g.get("worktree") and g.get("branch") and g.get("common"):
+        msg += (f"; to bring it back: git --git-dir={shlex.quote(g['common'])} worktree add "
+                f"{shlex.quote(cwd)} {shlex.quote(g['branch'])}")
+    return msg
 
 
 def window_cmd(w: dict, snapdir: Path) -> str:
@@ -309,6 +341,10 @@ def cmd_restore(a) -> int:
     print(f"restore from {s}:")
     for w in plan:
         print(f"  win {w['wid']:>2} → new window  {label(w)[:26]:<26} {w.get('cwd')}  [{describe(w)}]")
+        if g := gitinfo.describe(w.get("git")):
+            print(f"           {g}")
+        if gone := folder_gone(w):
+            print(f"           ⚠ {gone}")
     if not a.yes:
         print("dry run; add --yes to open them")
         return 0

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 from pathlib import Path
 
 from . import procs
@@ -88,3 +90,49 @@ def compactions(path: Path | None) -> int | None:
     except OSError:
         return None
     return n
+
+
+WRITERS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+CD = re.compile(r"^\s*cd\s+(\S+)\s*(?:&&|;|$)")
+
+
+def recent_dirs(path: Path | None, cwd: str | None = None) -> list[str]:
+    """Where it has been working, newest first, from the transcript's tail: the folder of each
+    file it wrote (Write, Edit, NotebookEdit: their `file_path`) and of each Bash command that
+    starts with `cd <dir>`. The process's own folder is only where it started: its tools take
+    absolute paths anywhere, and its Bash shell goes back there after every command."""
+    if path is None:
+        return []
+    try:
+        with path.open("rb") as f:
+            f.seek(max(0, f.seek(0, os.SEEK_END) - TAIL))
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    out: list[str] = []
+    for raw in reversed(lines):
+        if b'"tool_use"' not in raw:
+            continue
+        try:
+            content = (json.loads(raw).get("message") or {}).get("content") or []
+        except ValueError:
+            continue
+        for c in reversed(content if isinstance(content, list) else []):
+            if not isinstance(c, dict) or c.get("type") != "tool_use":
+                continue
+            inp = c.get("input") or {}
+            d = None
+            if c.get("name") in WRITERS and isinstance(inp.get("file_path"), str):
+                d = os.path.dirname(inp["file_path"])
+            elif c.get("name") == "Bash" and (m := CD.match(str(inp.get("command", "")))):
+                try:
+                    d = shlex.split(m[1])[0]
+                except ValueError:
+                    d = None
+                if d:
+                    d = os.path.expanduser(d)
+                    if not os.path.isabs(d) and cwd:
+                        d = os.path.join(cwd, d)
+            if d and d not in out:
+                out.append(os.path.normpath(d))
+    return out

@@ -3,6 +3,9 @@
   pys-agents [--json]                 every running claude: its window, title, state,
                                       context (tokens the last call held), compactions,
                                       model, name and folder
+  pys-agents where [--json]           every window: its folder, the git branch @HEAD there
+                                      (and whether it is a linked worktree), its changes
+                                      against the upstream, and the agent in it if any
   pys-agents skills [--install [--dir DIR]]
                                       the agent skills that come with pys; --install links
                                       them into DIR (default ~/.claude/skills)
@@ -20,7 +23,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import claude, procs
+from concurrent.futures import ThreadPoolExecutor
+
+from . import claude, gitinfo, procs
 
 SKILLS = Path(__file__).parent / "skills"
 
@@ -57,6 +62,77 @@ def agents() -> list[dict]:
     return out
 
 
+def where() -> list[dict]:
+    """Every window with its folder and git state; a claude's own folder when one runs in
+    it (its shell may sit elsewhere). The git calls run side by side: a slow repo costs its
+    own timeout, not the sum."""
+    wins = windows()
+    kids = procs.children_map()
+    live = claude.live_sessions()
+    rows = []
+    for w in wins:
+        tree = [w["pid"], *procs.descendants(w["pid"], kids)]
+        pid = next((p for p in tree if p in live), None)
+        s = live.get(pid) if pid else None
+        cwd = (s or {}).get("cwd") or procs.cwd(w["pid"]) or w.get("cwd")
+        recent = claude.recent_dirs(claude.transcript(s.get("sessionId", "")), cwd) if s else []
+        rows.append({"window": w["wid"], "title": w.get("name"), "cwd": cwd, "recent": recent,
+                     "agent": {"kind": "claude", "pid": pid, "name": s.get("name"),
+                               "session": s.get("sessionId"), "state": s.get("status")}
+                     if s else None})
+    def works_in(r: dict) -> str:
+        """An agent works where it last wrote inside a repo (its own words: the transcript);
+        else, and for a plain window, its folder."""
+        for d in r.pop("recent"):
+            if (pl := gitinfo.place(d)) is not None:
+                r["works_in"] = pl["top"]
+                return pl["top"]
+        r["works_in"] = None
+        return r["cwd"]
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        folders = list(ex.map(works_in, rows))
+        places = list(ex.map(gitinfo.place, folders))
+        changes = list(ex.map(gitinfo.changes, folders))
+    for r, pl, ch in zip(rows, places, changes):
+        r["git"] = pl and {**pl, **(ch or {})}
+    return rows
+
+
+def table(head: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
+    """Columns padded to their widest cell; the last one is left as it is."""
+    t = [head, *rows]
+    widths = [max(len(r[i]) for r in t) for i in range(len(head) - 1)]
+    for r in t:
+        print("  ".join(c.ljust(w) for c, w in zip(r, widths)) + "  " + r[-1])
+
+
+def cmd_where(a) -> int:
+    rows = where()
+    if a.json:
+        print(json.dumps(rows, indent=1, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("no pys server, or no window")
+        return 0
+    out = []
+    for r in rows:
+        g, ag = r["git"], r["agent"]
+        if g:
+            br = (g["branch"] or "detached") + (f" @{g['head']}" if g.get("head") else "")
+            br += " (wt)" if g["worktree"] else ""
+        folder = ("✎ " + short_path(r["works_in"])) if r.get("works_in") else short_path(r["cwd"])
+        out.append((str(r["window"]), (r["title"] or "-")[:24], folder,
+                    br if g else "-", gitinfo.state(g if g and "changed" in g else None),
+                    f"claude {ag['name'] or ag['session'][:8]} ({ag['state'] or '-'})" if ag else "-"))
+    table(("WIN", "TITLE", "FOLDER", "BRANCH", "STATE", "AGENT"), out)
+    if any(r.get("works_in") for r in rows):
+        print("✎ = the repo of the agent's latest writes (its transcript), not the folder it started in")
+    if any(r["git"] and r["git"]["worktree"] for r in rows):
+        print("(wt) = a linked worktree (git worktree add) of that repo")
+    return 0
+
+
 def short_path(p: str | None) -> str:
     if not p:
         return "-"
@@ -78,16 +154,12 @@ def cmd_list(a) -> int:
     if not rows:
         print("no Claude Code session is running")
         return 0
-    head = ("WIN", "TITLE", "STATE", "CTX", "COMPACT", "MODEL", "NAME", "FOLDER")
-    table = [head] + [(
+    table(("WIN", "TITLE", "STATE", "CTX", "COMPACT", "MODEL", "NAME", "FOLDER"), [(
         "-" if r["window"] is None else str(r["window"]),
         (r["title"] or "-")[:24], r["state"] or "-", kilo(r["context_tokens"]),
         "-" if r["compactions"] is None else str(r["compactions"]),
         (r["model"] or "-").removeprefix("claude-"), (r["name"] or "-")[:20],
-        short_path(r["cwd"])) for r in rows]
-    widths = [max(len(row[i]) for row in table) for i in range(len(head) - 1)]
-    for row in table:
-        print("  ".join(c.ljust(w) for c, w in zip(row, widths)) + "  " + row[-1])
+        short_path(r["cwd"])) for r in rows])
     return 0
 
 
@@ -122,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sp.add_parser("ls", help="the default: list the agents")
     p.add_argument("--json", action="store_true")
     p.set_defaults(f=cmd_list)
+    p = sp.add_parser("where", help="every window: folder, git branch, worktree, changes, agent")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(f=cmd_where)
     p = sp.add_parser("skills", help="the agent skills that come with pys")
     p.add_argument("--install", action="store_true")
     p.add_argument("--dir", default="~/.claude/skills")
