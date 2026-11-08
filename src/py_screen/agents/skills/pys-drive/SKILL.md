@@ -12,11 +12,13 @@ below reads freely and changes carefully.
 ## Name your window
 
 ```bash
-pys title --owner $PPID "<role> <what you work on>"     # e.g. "review PR 42", "build fix"
+pys title --agent "<role> <what you work on>"     # e.g. "review PR 42", "build fix"
 ```
 
-In Claude Code's Bash tool `$PPID` is `claude` itself, so the title belongs to this session
-and goes away when it ends (pys checks the owner's pid and start time). Keep it short, about
+`--agent` makes the Claude Code session this runs under the title's owner: pys finds it by
+its session file, so the title goes away when the session ends (pys checks the owner's pid
+and start time). `--owner $PPID` does the same on Linux and macOS, where `$PPID` in Claude
+Code's Bash tool is `claude`; in Windows' Git Bash it is not, `--agent` is right everywhere. Keep it short, about
 24 characters: the status line shows every window's whole title. Set it again when the work
 changes. A title the user set by hand (prefix `,`) wins over yours; leave it alone.
 

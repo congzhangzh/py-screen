@@ -56,6 +56,10 @@ os.makedirs(os.path.join(home, "sessions"), exist_ok=True)
 with open(os.path.join(home, "sessions", f"{os.getpid()}.json"), "w") as f:
     json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": name,
                "status": "idle"}, f)
+if "--resume" not in sys.argv:               # names its window as Claude's Bash tool would:
+    import subprocess                         # from a child shell, owner found by pys itself
+    subprocess.run([*json.loads(os.environ["FAKE_PYS"]), "title", "--agent", "fake at work"],
+                   shell=False, check=False)
 print("fake claude", sid, flush=True)
 time.sleep(600)
 '''
@@ -88,7 +92,8 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
     env = dict(os.environ, PYS_DIR=str(run_dir), PYS_CONFIG=str(cfg),
                XDG_STATE_HOME=str(tmp_path / "state"), PYS_PREFIX="C-]",
                CLAUDE_CONFIG_DIR=str(claude_home), PYS_SESSIONS_DIR=str(tmp_path / "snaps"),
-               PATH=f"{bin_}{os.pathsep}{os.environ['PATH']}", MY_VAR="kept")
+               PATH=f"{bin_}{os.pathsep}{os.environ['PATH']}", MY_VAR="kept",
+               FAKE_PYS=json.dumps(cmd("pys", "py_screen")))
     for k in ("PYS_WINDOW", "PYS_SESSION"):
         env.pop(k, None)
     if not WIN:
@@ -148,6 +153,8 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
         except AssertionError:
             raise AssertionError("the stand-in got no line; its screen:\n" + screen(wid))
         assert (claude_home / "typed.txt").read_text(encoding="utf-8") == TYPED
+        named = wait(lambda: [w for w in windows() if w["agent_title"] == "fake at work"])
+        assert named[0]["agent_owner"] == first["pid"]           # --agent found the claude
         sid = first["sessionId"]
         # a title no legacy code page holds all of (GBK has 管理员, not ✎; cp1252 neither):
         # snapshots, `pys ls` and the restore launcher must go through UTF-8 on every OS

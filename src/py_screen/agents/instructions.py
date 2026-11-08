@@ -43,7 +43,7 @@ def text(wid: str) -> str:
     pys = command_for("pys", "py_screen")
     agents = command_for("pys-agents", "py_screen.agents.listing")
     return f"""You run inside py-screen (pys), window {wid}, a terminal workspace the user shares with other windows and often other agents.
-- Name your window at the start and when your work changes, short (about 24 characters): {pys} title --owner $PPID "<role> <what you work on>". In Claude Code's Bash tool $PPID is this session, so the title ends with it.
+- Name your window at the start and when your work changes, short (about 24 characters): {pys} title --agent "<role> <what you work on>". --agent makes this session its owner (pys finds it), so the title ends with it.
 - {agents} lists the agents and their windows; `{agents} where` each window's folder and git branch. Look before you work in a repo another window works in.
 - `{pys} capture <wid>` reads a window. Type into one only with the user's word and only when it is idle: the text first, then Enter on its own (`{pys} send --enter <wid> ""`).
 - Never `{pys} kill`, prefix Q, or a pkill that could match pys: they end every window, the user's and other agents' too.

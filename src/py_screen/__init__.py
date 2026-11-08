@@ -82,9 +82,14 @@ def main() -> None:
     t.add_argument("text", nargs="?")
     t.add_argument("--wid", type=int, help="the window (default: the one this runs in)")
     t.add_argument("--clear", action="store_true")
-    t.add_argument("--owner", type=int, metavar="PID",
-                   help="drop the title when this process ends (e.g. $PPID in an agent's "
-                   "tool shell); without it, the title stays until cleared")
+    to = t.add_mutually_exclusive_group()
+    to.add_argument("--owner", type=int, metavar="PID",
+                    help="drop the title when this process ends (e.g. $PPID in an agent's "
+                    "tool shell); without it, the title stays until cleared")
+    to.add_argument("--agent", action="store_true",
+                    help="the owner is the Claude Code session this runs under, found by its "
+                    "session file: right on every system (in Windows' Git Bash $PPID is not "
+                    "claude's pid)")
     c = sub.add_parser("capture", help="print a window's screen")
     c.add_argument("wid", type=int, nargs="?")
     c.add_argument("--history", action="store_true", help="the scrollback first, then the screen")
@@ -145,8 +150,15 @@ def main() -> None:
         if a.cmd == "title":
             if a.clear and a.text is not None:
                 sys.exit("pys: title takes text or --clear, not both")
-            if a.owner is not None and a.text is None:
-                sys.exit("pys: --owner goes with a title's text")
+            if (a.owner is not None or a.agent) and a.text is None:
+                sys.exit("pys: --owner and --agent go with a title's text")
+            if a.agent:
+                from .agents import claude
+                a.owner = claude.agent_above(os.getpid())
+                if a.owner is None:
+                    sys.exit("pys: no Claude Code session above this process "
+                             f"(no {claude.home() / 'sessions'}/<pid>.json of an ancestor); "
+                             "pass --owner PID")
             if a.wid is None:
                 if (here := nested_in()) is None:
                     sys.exit("pys: not inside a window of this session; pass --wid")

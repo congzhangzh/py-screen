@@ -33,6 +33,20 @@ def session_of(pid: int) -> dict | None:
     return d if isinstance(d, dict) and d.get("sessionId") else None
 
 
+def agent_above(pid: int) -> int | None:
+    """The claude this process runs under: the nearest ancestor with a session file. Not
+    $PPID: in Windows' Git Bash that is an MSYS pid, not claude's, and a tool shell may sit
+    under a wrapper; the session file is what Claude Code itself writes for its pid."""
+    seen: set[int] = set()
+    p: int | None = pid
+    while p and p not in seen and len(seen) < 64:
+        seen.add(p)
+        if session_of(p) is not None and procs.alive(p):
+            return p
+        p = procs.parent(p)
+    return None
+
+
 def live_sessions() -> dict[int, dict]:
     """pid → session file, for every claude still running."""
     out = {}

@@ -60,6 +60,12 @@ if USE_PROC:
             kids.setdefault(ppid, []).append(int(p.name))
         return kids
 
+    def parent(pid: int) -> int | None:
+        try:
+            return int((PROC / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return None
+
     def cmdline(pid: int) -> list[str]:
         try:
             raw = (PROC / str(pid) / "cmdline").read_bytes()
@@ -130,6 +136,12 @@ else:
             if ppid is not None and ppid != p.pid:      # Windows' System Idle Process: 0 → 0
                 kids.setdefault(ppid, []).append(p.pid)
         return kids
+
+    def parent(pid: int) -> int | None:
+        try:
+            return psutil.Process(pid).ppid()
+        except _GONE:
+            return None
 
     def cmdline(pid: int) -> list[str]:
         try:
