@@ -69,14 +69,25 @@ class Rate:
         return ""
 
     async def update(self, ctx):
-        if self.last is None:
+        first = self.last is None
+        if first:
             self.last = (time.monotonic(), await asyncio.to_thread(self.read))
-            await asyncio.sleep(0.25)
-        (t0, prev), (t1, now) = self.last, (time.monotonic(), await asyncio.to_thread(self.read))
-        self.last = (t1, now)
-        if prev is None or now is None or t1 <= t0:
-            return ""
-        return self.show(prev, now, t1 - t0)
+        # A counter may not move between two reads (a coarse clock: a VM's CPU ticks, an idle
+        # disk): then there is nothing new to show, so the last text stays and the next read
+        # measures from the same start, over a longer time. The first update waits for a
+        # change, up to about a second, so a value shows at once.
+        for _ in range(4 if first else 1):
+            if first:
+                await asyncio.sleep(0.25)
+            (t0, prev), (t1, now) = self.last, (time.monotonic(), await asyncio.to_thread(self.read))
+            if prev is None or now is None:
+                self.last = (t1, now)
+                return ""
+            if t1 > t0 and (text := self.show(prev, now, t1 - t0)):
+                self.last = (t1, now)
+                self.text = text
+                return text
+        return self.text
 
 
 class Cpu(Rate):

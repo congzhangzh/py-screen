@@ -151,3 +151,20 @@ def test_loopback_names():
     ns = sample_ns()
     assert all(ns["loopback"](n) for n in ("lo", "lo0", "Loopback Pseudo-Interface 1"))
     assert not any(ns["loopback"](n) for n in ("eth0", "en0", "Ethernet", "wlan0"))
+
+
+def test_a_counter_that_did_not_move_keeps_the_last_value():
+    """A coarse clock (a VM's CPU ticks): two reads may see the same counters. Nothing new to
+    show then, so the widget keeps its last text and measures over a longer time next; the
+    first update waits for a change (up to about a second) instead of showing nothing."""
+    Cpu = sample_ns()["Cpu"]
+    reads = iter([(0, 100), (0, 100), (0, 100), (50, 200), (50, 200), (90, 300)])
+
+    class Coarse(Cpu):
+        def read(self):
+            return next(reads)
+
+    w = Coarse()
+    assert asyncio.run(w.update({})) == "cpu  50%"     # waited past two unchanged reads
+    assert asyncio.run(w.update({})) == "cpu  50%"     # unchanged: the last value stays
+    assert asyncio.run(w.update({})) == "cpu  40%"     # from the same start: (90-50)/(300-200)
