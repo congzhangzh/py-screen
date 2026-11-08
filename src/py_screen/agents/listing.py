@@ -169,8 +169,16 @@ def cmd_skills(a) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     for n in names:
         src, link = SKILLS / n, dest / n
+        other = pys_skill_target(link, n)
         if is_link(link) and os.path.realpath(link) == os.path.realpath(src):
             print(f"  {n}: already linked")
+        elif other and not link.exists():
+            # a link to a pys install that is gone (uninstalled, a moved bundle): ours to renew
+            remove_link(link)
+            print(f"  {n}: relinked {link} → {src}{make_link(src, link)} (was {other}, now gone)")
+        elif other:
+            print(f"  {n}: linked to another pys install ({other}); to use this one instead, "
+                  f"remove {link} and run this again")
         elif link.exists() or is_link(link):
             # never replace a skill of the same name: it may be the user's own version
             print(f"  {n}: {link} exists and is not ours; left as it is")
@@ -178,6 +186,28 @@ def cmd_skills(a) -> int:
             how = make_link(src, link)
             print(f"  {n}: linked {link} → {src}{how}")
     return 0
+
+
+def pys_skill_target(link: Path, name: str) -> str | None:
+    """Where a link points when that is a pys install's own copy of this skill
+    (…/py_screen/agents/skills/<name>), else None."""
+    if not is_link(link):
+        return None
+    try:
+        target = os.readlink(link)                  # a symlink's or a junction's target
+    except OSError:
+        return None
+    t = target.removeprefix("\\\\?\\")             # Windows' \\?\ long-path prefix
+    parts = [x.lower() for x in Path(t).parts[-4:]]
+    return t if parts == ["py_screen", "agents", "skills", name.lower()] else None
+
+
+def remove_link(link: Path) -> None:
+    """Remove the link itself, never what it points to (a junction is a directory entry)."""
+    try:
+        os.unlink(link)
+    except OSError:
+        os.rmdir(link)
 
 
 def is_link(p: Path) -> bool:

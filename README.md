@@ -343,7 +343,10 @@ Snapshots go to `~/.local/state/pys-sessions/<YYYYMMDD-HHMMSS>/` (`PYS_SESSIONS_
 never deleted or overwritten.
 
 **Skills.** `pys-agents skills --install` links them into `~/.claude/skills` (one of the same
-name that is already there is left alone):
+name that is already there is left alone; a link to a pys install that is gone is renewed; on
+Windows, without the right to make a symlink, a directory junction). A link points into the
+install that ran the command, so run it from one you keep (`uv tool install`, pip, a bundle):
+a `uvx` run lives in uv's cache, which `uv cache clean` empties.
 
 - `pys-drive`: name your window, find the other sessions, read a window, type into one only
   when it is idle (text, then Enter on its own: an Enter inside a paste is a new line), never

@@ -428,3 +428,21 @@ def test_a_restored_windows_command_keeps_only_known_flags() -> None:
     assert reopen.agent_argv({"wid": 1}) is None
     assert reopen.notes({"wid": 1, "foreground": ["vim", "a b"]}, Path("/s/20261108-1"))[1] \
         == "it was running: vim 'a b'"
+
+
+def test_skills_install_renews_a_link_to_a_pys_install_that_is_gone(tmp_path: Path, capsys) -> None:
+    """A link into another pys install's skills is pys's own, not the user's: renewed when
+    that install is gone, named (not called "not ours") while it is there."""
+    from py_screen.agents import listing
+    dest = tmp_path / "skills"
+    dest.mkdir()
+    gone = tmp_path / "old-venv" / "py_screen" / "agents" / "skills" / "pys-drive"
+    (dest / "pys-drive").symlink_to(gone)                     # uninstalled since
+    live = tmp_path / "other" / "py_screen" / "agents" / "skills" / "pys-restore"
+    live.mkdir(parents=True)
+    (dest / "pys-restore").symlink_to(live)                   # another install, still there
+    assert listing.main(["skills", "--install", "--dir", str(dest)]) == 0
+    out = capsys.readouterr().out
+    assert (dest / "pys-drive" / "SKILL.md").exists() and "relinked" in out
+    assert os.path.realpath(dest / "pys-restore") == os.path.realpath(live)
+    assert "linked to another pys install" in out and "not ours" not in out
