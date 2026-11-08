@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import re
 import sys
 import time
@@ -145,6 +146,24 @@ class Config:
 
 def default() -> Config:
     return Config([load(), clock()], {}, None)
+
+
+# pys's own commands, run with this pys's own Python: they need not be on PATH (uvx, a
+# bundle whose bin/ is not on PATH) and can't be another install's, of another version
+OWN = {"pys": "py_screen", "pys-agents": "py_screen.agents.listing",
+       "pys-sessions": "py_screen.agents.sessions"}
+
+
+def command(argv: list[str]) -> list[str]:
+    """What runs a configured command (ON_CHANGE): one of pys's own as `python -m`, any
+    other found on PATH as a shell finds it (shutil.which: on Windows also <name>.cmd,
+    which CreateProcess alone never tries); else as it is, to fail with its own error."""
+    if not argv:
+        return []
+    if argv[0] in OWN:
+        return [sys.executable, "-m", OWN[argv[0]], *argv[1:]]
+    exe = shutil.which(argv[0])
+    return [exe, *argv[1:]] if exe else list(argv)
 
 
 def path() -> Path:

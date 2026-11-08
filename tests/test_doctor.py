@@ -101,3 +101,14 @@ def test_doctor_passes_the_sample(tmp_path: Path) -> None:
     r = pys_doctor(cfg)
     assert r.returncode == 0, r.stdout
     assert "✓ widget 0 Branch" in r.stdout and "no errors" in r.stdout
+
+
+def test_pys_own_commands_need_not_be_on_path() -> None:
+    """ON_CHANGE = ["pys-sessions", ...] works for a uvx install or a bundle whose bin/ is
+    not on PATH: pys runs its own commands with its own Python, never another install's."""
+    import sys
+    from py_screen import config
+    assert config.command(["pys-sessions", "save", "--quiet"]) == \
+        [sys.executable, "-m", "py_screen.agents.sessions", "save", "--quiet"]
+    assert config.command(["no-such-command-pys-test", "x"]) == ["no-such-command-pys-test", "x"]
+    assert config.command([]) == []

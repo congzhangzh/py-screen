@@ -121,7 +121,9 @@ def cmd_check() -> int:
     check_updates(r, cfg)
     if cfg.on_change:
         exe = cfg.on_change[0]
-        found = shutil.which(exe) or (os.path.isfile(exe) and os.access(exe, os.X_OK) and exe)
+        argv = config.command(cfg.on_change)
+        found = (exe in config.OWN and f"{exe} of this pys ({' '.join(argv[:3])})") \
+            or shutil.which(exe) or (os.path.isfile(exe) and os.access(exe, os.X_OK) and exe)
         if found:
             r.ok(f"ON_CHANGE runs {found}; a kill waits for it {cfg.kill_hook_timeout:.0f} s at most")
         else:

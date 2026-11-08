@@ -96,7 +96,7 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
         out = []
         for f in (claude_home / "sessions").glob("*.json"):
             try:
-                out.append(json.loads(f.read_text()))
+                out.append(json.loads(f.read_text(encoding="utf-8")))
             except ValueError:                # being written
                 pass
         return out
@@ -120,7 +120,7 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
         assert os.path.realpath(where[0]["cwd"]) == os.path.realpath(work)
 
         sessions("save")
-        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text())
+        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text(encoding="utf-8"))
         ag = snap["windows"][0]["agent"]
         assert ag["kind"] == "claude" and ag["session"] == sid
         assert ag["env"] == {"MY_VAR": "kept"}
