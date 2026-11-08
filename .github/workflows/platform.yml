@@ -5,7 +5,9 @@ on:
   push:
     paths:
       - "src/py_screen/platform/**"
+      - "src/py_screen/agents/**"
       - "tests/test_rpc_smoke.py"
+      - "tests/test_agents_smoke.py"
       - ".github/workflows/platform.yml"
   workflow_dispatch:
 jobs:
@@ -25,7 +27,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv python install 3.14
       # The pty harness is POSIX-only; the RPC smoke test runs the whole server.
-      - run: uv run pytest -q -p no:cacheprovider tests/test_rpc_smoke.py
+      - run: uv run pytest -q -p no:cacheprovider tests/test_rpc_smoke.py tests/test_agents_smoke.py
       - name: server log on failure
         if: failure()
         shell: bash

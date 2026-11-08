@@ -16,10 +16,9 @@
 # thread with asyncio.to_thread, so a stuck read can't freeze the screen.
 #
 # The cpu, mem, net and disk widgets read the kernel's /proc on Linux, which needs nothing
-# extra. On macOS and Windows they use psutil if it is installed, and show nothing if not:
-#     uv tool install 'py-screen-mux[stats]'      # or: pip install psutil
-# pys itself never needs psutil; only these widgets do. The space widget needs neither:
-# the space comes from the standard library everywhere.
+# extra. On macOS and Windows they use psutil, which pys installs there (it shows nothing
+# if psutil is missing all the same). The space widget needs neither: the space comes from
+# the standard library everywhere.
 
 import asyncio
 import os

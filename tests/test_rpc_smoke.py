@@ -70,8 +70,8 @@ def test_rpc_smoke(tmp_path: Path) -> None:
 
         ls = json.loads(pys("ls", "--json").stdout)
         assert [w["wid"] for w in ls["windows"]] == [wid]
-        if not WIN:                                              # proc_cwd: /proc or libproc
-            assert os.path.realpath(ls["windows"][0]["cwd"]) == os.path.realpath(work)
+        # proc_cwd: /proc, libproc, or the PEB (psutil) on Windows
+        assert os.path.realpath(ls["windows"][0]["cwd"]) == os.path.realpath(work)
 
         def win() -> dict:
             return json.loads(pys("ls", "--json").stdout)["windows"][0]

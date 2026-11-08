@@ -19,7 +19,7 @@ pys keeps its windows in memory. What outlives it:
 | `pys-sessions list` / `show [SNAP]` | the snapshots; what one holds (`why` lines for a forensic one) |
 | `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then opens each window again: `claude <its flags> --resume <id>`, or a shell in the folder; title `↺<old title>` until the agent sets its own; skips a session that already runs |
 | `pys-sessions forensic [--write]` | no snapshot of the dead server? rebuild it from its server record and from the evidence Claude Code leaves |
-| `pys-sessions install` | a systemd user timer running `save` every 2 minutes |
+| `pys-sessions install` | a systemd user timer running `save` every 2 minutes (Linux; elsewhere ON_CHANGE) |
 
 ## Steps
 

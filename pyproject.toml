@@ -24,11 +24,14 @@ classifiers = [
 dependencies = [
     "pyte>=0.8.2",
     "pywinpty>=3.1; sys_platform == 'win32'",   # ConPTY; the platform layer's Windows Pty
+    # off Linux, what /proc tells on Linux: a window's folder (Windows), and the processes
+    # pys-agents and pys-sessions look at (agents/procs.py); the sample's widgets use it too
+    "psutil>=7; sys_platform != 'linux'",
 ]
 
 [project.optional-dependencies]
-# Only the sample config's cpu/mem/net/disk widgets use it, and only off Linux (Linux reads
-# /proc): `uv tool install 'py-screen-mux[stats]'`. pys itself never imports it.
+# psutil, which macOS and Windows get anyway (above), for Linux too: nothing there needs it
+# (Linux reads /proc), the name stays so that `py-screen-mux[stats]` keeps installing.
 stats = ["psutil>=7"]
 
 [project.urls]

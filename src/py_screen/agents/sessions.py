@@ -14,6 +14,7 @@ running in it, its last screen) outside pys, and open them again after pys died.
                                      for the Claude sessions, from server.log, Claude's
                                      leftover sockets and the transcripts (see `why`)
   pys-sessions install               a systemd user timer that runs `save` every 2 minutes
+                                     (Linux; elsewhere ON_CHANGE below does it)
 
 Snapshots: $PYS_SESSIONS_DIR, default ~/.local/state/pys-sessions/<YYYYMMDD-HHMMSS>/
 (windows.json + one gzipped screen per window). Never deleted or overwritten: a new one is
@@ -48,6 +49,7 @@ from pathlib import Path
 from .. import config, proto
 from . import claude, gitinfo, procs
 from .procs import pys
+from .reopen import keep_flags   # the restored window's launcher uses it too
 
 HOME = Path.home()
 REFRESH = 2 * 3600          # seconds: a new snapshot at least this often, for the screens
@@ -71,30 +73,6 @@ def keep_env() -> list[str]:
         return []
 
 
-# flags of the original claude that a resume keeps (value-taking ones take the next word)
-KEEP_VAL = {"--name", "-n", "--permission-mode", "--model", "--add-dir", "--agent", "--settings",
-            "--mcp-config", "--allowedTools", "--allowed-tools", "--disallowedTools",
-            "--disallowed-tools", "--effort", "--fallback-model"}
-KEEP_BOOL = {"--dangerously-skip-permissions", "--chrome", "--ide", "--verbose"}
-
-
-def keep_flags(argv: list[str]) -> list[str]:
-    out, i = [], 1
-    while i < len(argv):
-        a = argv[i]
-        key = a.split("=", 1)[0]
-        if key in KEEP_BOOL:
-            out.append(a)
-        elif key in KEEP_VAL:
-            if "=" in a:
-                out.append(a)
-            elif i + 1 < len(argv):
-                out += [a, argv[i + 1]]
-                i += 1
-        i += 1
-    return out
-
-
 def claude_session(pid: int, env_keys: list[str]) -> dict | None:
     d = claude.session_of(pid)
     if d is None:
@@ -109,16 +87,8 @@ ROLL = re.compile(r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 def codex_session(pid: int) -> dict | None:
     """Untested path: the rollout file a running codex holds open names its session."""
-    try:
-        fds = os.listdir(f"/proc/{pid}/fd")
-    except OSError:
-        return None
-    for fd in fds:
-        try:
-            m = ROLL.search(os.readlink(f"/proc/{pid}/fd/{fd}"))
-        except OSError:
-            continue
-        if m:
+    for path in procs.open_files(pid):
+        if m := ROLL.search(path):
             return {"kind": "codex", "pid": pid, "session": m[1], "cwd": procs.cwd(pid)}
     return None
 
@@ -128,7 +98,8 @@ def agent_in(shell_pid: int, kids, env_keys: list[str]) -> tuple[dict | None, li
     shell's first child) for a plain shell."""
     fg: list[str] = []
     # the window's own process first: `pys new claude` (or `bash -c "claude …"`, which
-    # execs it) runs the agent as the window itself, with no shell above it
+    # execs it) runs the agent as the window itself, with no shell above it; a restored
+    # window's launcher (reopen) runs it as its child
     for p in [shell_pid, *procs.descendants(shell_pid, kids)]:
         if not fg and p != shell_pid:
             fg = procs.cmdline(p)
@@ -302,26 +273,10 @@ def folder_gone(w: dict) -> str:
     return msg
 
 
-def window_cmd(w: dict, snapdir: Path) -> str:
-    cwd = w.get("cwd") or str(HOME)
-    ag = w.get("agent")
-    banner = f"restored by pys-sessions from {snapdir.name}, window {w['wid']}"
-    if w.get("screen"):
-        banner += f"; its last screen: zless {snapdir / w['screen']}"
-    parts = [f"cd {shlex.quote(cwd)} || cd", f"printf '%s\\n' {shlex.quote(banner)}"]
-    if ag and ag["kind"] == "claude":
-        env = "".join(f"{k}={shlex.quote(v)} " for k, v in (ag.get("env") or {}).items())
-        flags = shlex.join(keep_flags(ag.get("argv") or ["claude"]))
-        parts.append(f"{env}claude {flags + ' ' if flags else ''}--resume {shlex.quote(ag['session'])}")
-    elif ag and ag["kind"] == "codex":
-        parts.append(f"codex resume {shlex.quote(ag['session'])}")
-    elif (e := w.get("ended_agent")):
-        hint = f"{e['kind']} {e['session']} ran here and ended; to go on: claude --resume {e['session']}"
-        parts.append(f"printf '%s\\n' {shlex.quote(hint)}")
-    elif w.get("foreground"):
-        parts.append(f"printf '%s\\n' {shlex.quote('it was running: ' + shlex.join(w['foreground']))}")
-    parts.append("exec bash -i")
-    return "; ".join(parts)
+def window_cmd(w: dict, snapdir: Path) -> list[str]:
+    """The argv of a restored window: the launcher (reopen.py) reads the window from the
+    snapshot itself, so no shell quoting is involved, on any system."""
+    return [sys.executable, "-m", "py_screen.agents.reopen", str(snapdir), str(w["wid"])]
 
 
 def titled_by_agent(wid: int) -> bool:
@@ -361,7 +316,7 @@ def cmd_restore(a) -> int:
             before = {x["wid"] for x in json.loads(pys("ls", "--json"))["windows"]}
         except (RuntimeError, ValueError):
             before = set()             # no server yet: the first `pys new` starts it
-        pys("new", "bash", "-c", window_cmd(w, s))
+        pys("new", *window_cmd(w, s))
         time.sleep(0.3)
         after = json.loads(pys("ls", "--json"))["windows"]
         new = [x for x in after if x["wid"] not in before]
@@ -474,7 +429,7 @@ def cmd_forensic(a) -> int:
         except ValueError:
             continue
         started = datetime.fromtimestamp(sk.stat().st_mtime)
-        if began <= started < ended and not Path(f"/proc/{pid}").exists():
+        if began <= started < ended and not procs.alive(pid):
             socks.append((pid, started))
     trs = transcripts_since(began)
     running = live_agent_sessions()   # never this session or another live one
@@ -587,6 +542,12 @@ def cmd_forensic(a) -> int:
 
 # ---- install --------------------------------------------------------------------
 def cmd_install(a) -> int:
+    if not shutil.which("systemctl"):
+        print("pys-sessions install sets up a systemd user timer, and this system has no "
+              "systemd.\nPut this in your config instead (pys doctor shows where it is): a "
+              "snapshot\nat each change of the windows and before a kill:\n\n"
+              '    ON_CHANGE = ["pys-sessions", "save", "--quiet"]', file=sys.stderr)
+        return 1
     ud = HOME / ".config/systemd/user"
     ud.mkdir(parents=True, exist_ok=True)
     exe = shutil.which("pys-sessions") or str(Path(sys.argv[0]).resolve())

@@ -11,5 +11,6 @@ import anything from here:
 
 They read Claude Code's own files (`~/.claude/sessions/<pid>.json`, the transcripts). Those
 are not a documented interface: a Claude Code update may change them, so every read here is
-defensive and a field that is missing shows as `-`. Linux only for now (they read /proc).
+defensive and a field that is missing shows as `-`. Processes: /proc on Linux, psutil on
+macOS and Windows (procs.py).
 """

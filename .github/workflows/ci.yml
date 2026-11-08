@@ -41,11 +41,11 @@ jobs:
       - name: The suite on vterm (the default)
         run: uv run pytest -q $TESTS
         env:
-          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
+          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py tests/test_agents_smoke.py' || '' }}
       - name: The suite on pyte
         run: PYS_TERM=pyte uv run pytest -q $TESTS
         env:
-          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py' || '' }}
+          TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py tests/test_agents_smoke.py' || '' }}
 
   sanitize:
     runs-on: ubuntu-latest

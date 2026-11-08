@@ -168,15 +168,33 @@ def cmd_skills(a) -> int:
     dest.mkdir(parents=True, exist_ok=True)
     for n in names:
         src, link = SKILLS / n, dest / n
-        if link.is_symlink() and link.resolve() == src.resolve():
+        if is_link(link) and os.path.realpath(link) == os.path.realpath(src):
             print(f"  {n}: already linked")
-        elif link.exists() or link.is_symlink():
+        elif link.exists() or is_link(link):
             # never replace a skill of the same name: it may be the user's own version
             print(f"  {n}: {link} exists and is not ours; left as it is")
         else:
-            link.symlink_to(src)
-            print(f"  {n}: linked {link} → {src}")
+            how = make_link(src, link)
+            print(f"  {n}: linked {link} → {src}{how}")
     return 0
+
+
+def is_link(p: Path) -> bool:
+    return p.is_symlink() or p.is_junction()
+
+
+def make_link(src: Path, link: Path) -> str:
+    """A symlink; on Windows, where one needs Developer Mode or an administrator, a directory
+    junction when it is refused (any user may make one, and it reads the same)."""
+    try:
+        link.symlink_to(src, target_is_directory=True)
+        return ""
+    except OSError:
+        if sys.platform != "win32":
+            raise
+    import _winapi
+    _winapi.CreateJunction(str(src), str(link))
+    return " (a junction)"
 
 
 def main(argv: list[str] | None = None) -> int:

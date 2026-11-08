@@ -287,7 +287,14 @@ def loadavg() -> float | None:
 
 
 def proc_cwd(pid: int) -> str | None:
-    return None                                      # lives in the child's PEB; not read yet
+    """The folder a window's shell is in. It lives in the child's PEB (its process
+    parameters); psutil reads it there, the same for x64 and ARM64. cmd.exe's `cd` moves it,
+    PowerShell's Set-Location does not (it keeps a location of its own)."""
+    import psutil                                    # a dependency of pys on Windows
+    try:
+        return psutil.Process(pid).cwd() or None
+    except (psutil.Error, OSError):
+        return None
 
 
 STILL_ACTIVE = 259

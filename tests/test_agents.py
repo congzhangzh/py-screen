@@ -17,9 +17,8 @@ import pytest
 
 from harness import PYS, Session
 
-# pys-agents and pys-sessions read /proc (README: Linux for now); macOS runs this suite too
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"),
-                                reason="the agent tools read /proc: Linux only")
+# the pty harness is POSIX-only; tests/test_agents_smoke.py runs on Windows too
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="the pty harness is POSIX-only")
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys, time, uuid
@@ -136,11 +135,11 @@ def test_save_then_restore_brings_the_session_back(tmp_path: Path) -> None:
                                 Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")])
         assert resumed[0]["sessionId"] == sid and resumed[0]["name"] == "helper"
         pid = resumed[0]["pid"]
-        argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode().split("\0")
+        from py_screen.agents import procs
+        argv = procs.cmdline(pid)
         assert "--permission-mode" in argv and "plan" in argv
         assert "--secret-flag" not in argv                   # only the flags it knows
-        env = Path(f"/proc/{pid}/environ").read_bytes().decode().split("\0")
-        assert "MY_VAR=kept" in env
+        assert procs.environ(pid, ["MY_VAR"]) == {"MY_VAR": "kept"}
     finally:
         sess.kill()
 
@@ -188,7 +187,7 @@ def test_a_zombie_is_not_alive() -> None:
     session: restore must bring it back, not skip it as `already running`."""
     from py_screen.agents import procs
     p = subprocess.Popen(["true"])
-    wait(lambda: Path(f"/proc/{p.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z")
+    os.waitid(os.P_PID, p.pid, os.WEXITED | os.WNOWAIT)   # it ended; not reaped: a zombie
     try:
         assert not procs.alive(p.pid)
         assert procs.alive(os.getpid())
@@ -384,3 +383,48 @@ def test_caption_names_where_the_agent_works(tmp_path: Path, monkeypatch) -> Non
         assert text == "~/repo ✎ ~/repo-topic  topic wt"
     finally:
         sess.kill()
+
+
+def test_the_psutil_backend_answers_as_proc_does(tmp_path: Path) -> None:
+    """macOS and Windows read processes through psutil: on Linux, where both backends work,
+    they must give the same answers (the module, loaded once more with /proc switched off)."""
+    if not sys.platform.startswith("linux"):
+        pytest.skip("needs /proc to compare with")
+    import inspect
+    import types
+    from py_screen.agents import procs
+    src = inspect.getsource(procs).replace(
+        'USE_PROC = (PROC / "self" / "stat").exists()', "USE_PROC = False")
+    ps = types.ModuleType("procs_psutil")
+    exec(compile(src, "procs_psutil", "exec"), ps.__dict__)
+    assert not ps.USE_PROC and procs.USE_PROC
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                             cwd=tmp_path, env=dict(os.environ, MY_VAR="kept"))
+    try:
+        me = os.getpid()
+        wait(lambda: procs.cmdline(child.pid)[1:2] == ["-c"])
+        for f in ("cmdline", "comm", "cwd", "alive", "open_files"):
+            assert getattr(ps, f)(child.pid) == getattr(procs, f)(child.pid), f
+        assert ps.environ(child.pid, ["MY_VAR"]) == procs.environ(child.pid, ["MY_VAR"]) \
+            == {"MY_VAR": "kept"}
+        assert child.pid in ps.children_map()[me] and child.pid in procs.children_map()[me]
+        assert child.pid in ps.descendants(me, ps.children_map())
+    finally:
+        child.kill()
+        child.wait()
+    assert not ps.alive(child.pid) and not procs.alive(child.pid)
+
+
+def test_a_restored_windows_command_keeps_only_known_flags() -> None:
+    """The launcher builds the resume from the snapshot, as argv (no shell quoting), the
+    same on every system; a Windows Node claude's script path is not taken for a flag."""
+    from py_screen.agents import reopen
+    w = {"wid": 3, "agent": {"kind": "claude", "session": "abc", "argv": [
+        r"C:\nodejs\node.exe", r"C:\npm\node_modules\cli.js", "--model", "opus",
+        "--secret", "--dangerously-skip-permissions", "--name=it's mine"]}}
+    assert reopen.agent_argv(w) == ["claude", "--model", "opus",
+                                    "--dangerously-skip-permissions", "--name=it's mine",
+                                    "--resume", "abc"]
+    assert reopen.agent_argv({"wid": 1}) is None
+    assert reopen.notes({"wid": 1, "foreground": ["vim", "a b"]}, Path("/s/20261108-1"))[1] \
+        == "it was running: vim 'a b'"

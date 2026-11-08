@@ -65,6 +65,7 @@ name = "py-screen-mux"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "psutil", marker = "sys_platform != 'linux'" },
     { name = "pyte" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
 ]
@@ -82,6 +83,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "psutil", marker = "sys_platform != 'linux'", specifier = ">=7" },
     { name = "psutil", marker = "extra == 'stats'", specifier = ">=7" },
     { name = "pyte", specifier = ">=0.8.2" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=3.1" },

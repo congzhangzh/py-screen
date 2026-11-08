@@ -35,7 +35,9 @@ permissions:
 
 env:
   # one OS per runner image; the wheel each builds is the wheel its smoke job installs
-  CIBW_BUILD: cp314-*
+  # every Python pys runs on (requires-python >= 3.14): uv may pick the newest one, and a
+  # Python with no wheel builds the sdist, which without a C compiler loses the vterm engine
+  CIBW_BUILD: cp314-* cp315-*
   CIBW_SKIP: '*-musllinux_*'
   CIBW_VERSION: 4.3.1
 

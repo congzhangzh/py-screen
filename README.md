@@ -233,7 +233,7 @@ window with an agent in it, the repo the agent last wrote in (✎, see
 `async update(ctx) -> str`, so new ones need no change to pys; `ctx` is the focused window:
 `cwd`, `wid` and `pid` (its process).
 CPU, memory, network and disk (read/write in kB/s) read `/proc` on Linux; on macOS and
-Windows they use psutil (`uv tool install 'py-screen-mux[stats]'`) and show nothing without it.
+Windows they use psutil, which pys installs there.
 
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
 
@@ -276,7 +276,7 @@ itself and the keys would loop between the window and the server. Another sessio
 Agents such as Claude Code often run in pys windows, several at a time. pys comes with two
 commands for them and two skills that teach an agent to use pys well. They are built only on
 the commands above, so the core knows nothing of them. Claude Code for now (Codex later);
-Linux for now (they read `/proc`).
+Linux, macOS and Windows (processes: `/proc` on Linux, psutil elsewhere).
 
 ![Two agents in pys windows; pys-agents lists them; pys kill ends everything; pys-sessions restore opens both again, each with its session and folder](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-agents.v3.gif)
 
@@ -337,7 +337,7 @@ SESSIONS_KEEP_ENV = []    # variables of a claude's environment its resume gets 
 | `pys-sessions list` / `show [SNAP]` | the snapshots, what one holds |
 | `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then each window again: `claude <its flags> --resume <id>`, or a shell in its folder; title `↺<old title>` until the agent sets its own. The dry run says which branch each window was on, and when a worktree's folder is gone since, the `git worktree add` that brings it back |
 | `pys-sessions forensic [--write]` | no snapshot of the dead server? rebuild it from its server record (folders, titles) and from what Claude Code leaves behind (sockets, transcripts), with a `why` per window |
-| `pys-sessions install` | a systemd user timer running `save` every 2 minutes, besides ON_CHANGE |
+| `pys-sessions install` | a systemd user timer running `save` every 2 minutes, besides ON_CHANGE (Linux; on macOS and Windows ON_CHANGE alone does it) |
 
 Snapshots go to `~/.local/state/pys-sessions/<YYYYMMDD-HHMMSS>/` (`PYS_SESSIONS_DIR`) and are
 never deleted or overwritten.
