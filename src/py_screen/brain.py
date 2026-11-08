@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -1607,9 +1608,14 @@ class Brain:
         """Run ON_CHANGE once, without waiting on it in the loop. Its output goes where
         the brain's does, the server log. PYS_DIR lets a `pys` inside it reach us."""
         env = dict(os.environ, PYS_EVENT=event, PYS_DIR=str(proto.runtime_dir()))
+        argv = list(self.cfg.on_change or [])
+        # found as `pys doctor` finds it: Windows' CreateProcess only tries <name>.exe, so a
+        # launcher like the bundle's pys-sessions.cmd would be missed without PATHEXT
+        if argv and (exe := shutil.which(argv[0])):
+            argv[0] = exe
         try:
             p = await asyncio.create_subprocess_exec(
-                *self.cfg.on_change or [], stdin=asyncio.subprocess.DEVNULL, env=env)
+                *argv, stdin=asyncio.subprocess.DEVNULL, env=env)
         except OSError as e:
             log(f"ON_CHANGE ({event}):", e)
             return

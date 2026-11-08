@@ -43,12 +43,11 @@ done
 here=$(cd "$(dirname "$self")/.." && pwd)
 exec "$here/python/bin/python3" -m MODULE "$@"
 """
-# bin/<name> → the module it runs; the agent tools read /proc, so Linux only
+# bin/<name> (<name>.cmd on Windows) → the module it runs; every system gets all three
 LAUNCHERS = {"pys": "py_screen", "pys-agents": "py_screen.agents.listing",
              "pys-sessions": "py_screen.agents.sessions"}
-LINUX_ONLY = {"pys-agents", "pys-sessions"}
 
-LAUNCHER_CMD = """@"%~dp0python\\python.exe" -m py_screen %*\r\n"""
+LAUNCHER_CMD = """@"%~dp0python\\python.exe" -m MODULE %*\r\n"""
 
 README = """py-screen {version} for {plat}, ready to use
 ==================================================
@@ -172,15 +171,14 @@ def main() -> None:
             sys.exit(f"bundle: installed py-screen-mux {shown}, wanted {a.version}")
 
         if WIN:
-            (root / "pys.cmd").write_bytes(LAUNCHER_CMD.encode())
+            for n, module in LAUNCHERS.items():
+                (root / f"{n}.cmd").write_bytes(LAUNCHER_CMD.replace("MODULE", module).encode())
             run_cmd, bindir, link = r"pys.cmd", "folder itself", ""
             pip = r"python\python.exe -m pip"
             site, pylicense = "Lib/site-packages", "LICENSE.txt"
         else:
             (root / "bin").mkdir()
             for n, module in LAUNCHERS.items():
-                if n in LINUX_ONLY and not sys.platform.startswith("linux"):
-                    continue
                 launcher = root / "bin" / n
                 launcher.write_text(LAUNCHER_SH.replace("MODULE", module))
                 launcher.chmod(0o755)
