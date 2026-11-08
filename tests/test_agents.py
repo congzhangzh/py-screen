@@ -378,6 +378,8 @@ def test_caption_names_where_the_agent_works(tmp_path: Path, monkeypatch) -> Non
             f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
                     "name": "Edit", "input": {"file_path": str(wt / "a.txt")}}]}}) + "\n")
         text = widget.caption_text({"cwd": str(repo), "pid": win["pid"]})
-        assert text.startswith("✎ ") and text.endswith("repo-topic  topic wt")
+        # where it started first (its Bash goes back there), then where it works: the
+        # worktree sits beside it, so only its name
+        assert text == f"{repo.resolve()} ✎ repo-topic  topic wt"
     finally:
         sess.kill()

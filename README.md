@@ -204,13 +204,18 @@ pys doctor --reset         # keep yours as config.py.<YYYYMMDD-HHMMSS>, then wri
 `CAPTION` in place of the folder: any object with `.every` and `async update(ctx) -> str`, run
 for each window on screen (`ctx`: `cwd`, `wid`, `pid`), at most 5 s per update.
 `caption()` from `py_screen.agents.widget` shows where the work is: the folder and its git
-branch and changes, and for a window with an agent in it, the repo the agent last wrote in (✎),
-not the folder it started in:
+branch and changes, and for a window with an agent in it, the folder it started in first, then
+the repo it last wrote in (✎) when that is elsewhere:
 
 ```python
 from py_screen.agents.widget import caption
-CAPTION = caption()        # " 3 build fix  ✎ ~/src/app-fix  fix-build wt 1 mod "
+CAPTION = caption()        # " 3 build fix  ~/src/app ✎ app-fix  fix-build wt 1 mod "
 ```
+
+It reads: started in `~/src/app` (its Bash goes back there, and a resume runs there), works in
+`app-fix` beside it (✎), on branch `fix-build`, a linked worktree (`wt`), 1 tracked file
+modified. Also: `3 new` untracked files, `↑2 ↓5` commits ahead of / behind the upstream (as of
+the last fetch), `@1f0e2c1` a detached HEAD; nothing after the branch: clean.
 
 ```python
 WIDGETS = [cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10), load(), clock()]
