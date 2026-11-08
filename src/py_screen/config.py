@@ -161,7 +161,7 @@ def load_config() -> Config:
         return cfg
     ns: dict = {"cmd": cmd, "load": load, "clock": clock}
     try:
-        exec(compile(p.read_text(), str(p), "exec"), ns)
+        exec(compile(p.read_bytes(), str(p), "exec"), ns)  # UTF-8 source, any locale
     except Exception as e:  # a broken config must not stop the brain
         print(f"pys: config {p}: {e!r}", file=sys.stderr)
         cfg.error = f"config error: {type(e).__name__}"

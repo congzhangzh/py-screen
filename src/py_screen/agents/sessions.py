@@ -46,7 +46,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .. import config, proto
+from .. import config, proto, utf8_pipes
 from . import claude, gitinfo, procs
 from .procs import pys
 from .reopen import keep_flags   # the restored window's launcher uses it too
@@ -160,7 +160,7 @@ def cmd_save(a) -> int:
     sig = hashlib.sha256(json.dumps([info["pid"], sig_src]).encode()).hexdigest()[:16]
     snaps = snapshots()
     if snaps:
-        last = json.loads((snaps[-1] / "windows.json").read_text())
+        last = json.loads((snaps[-1] / "windows.json").read_text(encoding="utf-8"))
         age = time.time() - last.get("saved_at", 0)
         # PYS_EVENT=kill: pys's ON_CHANGE hook, run just before the windows end: always keep it
         if last.get("sig") == sig and age < REFRESH and os.environ.get("PYS_EVENT") != "kill":
@@ -174,13 +174,13 @@ def cmd_save(a) -> int:
         except (RuntimeError, subprocess.TimeoutExpired):
             continue
         text = "\n".join(text.splitlines()[-HIST_LINES:]) + "\n"
-        with gzip.open(d / f"screen-{w['wid']}.txt.gz", "wt") as f:
+        with gzip.open(d / f"screen-{w['wid']}.txt.gz", "wt", encoding="utf-8") as f:
             f.write(text)
         w["screen"] = f"screen-{w['wid']}.txt.gz"
     snap = {"saved_at": time.time(), "saved": d.name, "server_pid": info["pid"], "sig": sig,
             "source": "save", "event": os.environ.get("PYS_EVENT"), "layout": info.get("panes"),
             "windows": wins}
-    (d / "windows.json").write_text(json.dumps(snap, indent=1, ensure_ascii=False))
+    (d / "windows.json").write_text(json.dumps(snap, indent=1, ensure_ascii=False), encoding="utf-8")
     if not a.quiet:
         print(f"saved {d} ({len(wins)} windows)")
     return 0
@@ -205,7 +205,7 @@ def pick(spec: str | None) -> Path:
         sys.exit("pys-sessions: no snapshot yet; try `pys-sessions forensic --write`")
     now = current_server_pid()
     for s in reversed(snaps):              # the last one of an earlier pys server
-        if json.loads((s / "windows.json").read_text()).get("server_pid") != now:
+        if json.loads((s / "windows.json").read_text(encoding="utf-8")).get("server_pid") != now:
             return s
     return snaps[-1]
 
@@ -227,7 +227,7 @@ def describe(w: dict) -> str:
 def cmd_list(a) -> int:
     now = current_server_pid()
     for s in snapshots():
-        d = json.loads((s / "windows.json").read_text())
+        d = json.loads((s / "windows.json").read_text(encoding="utf-8"))
         n = len(d["windows"])
         ag = sum(1 for w in d["windows"] if w.get("agent"))
         mark = "  (this server)" if d.get("server_pid") == now else ""
@@ -237,7 +237,7 @@ def cmd_list(a) -> int:
 
 def cmd_show(a) -> int:
     s = pick(a.snap)
-    d = json.loads((s / "windows.json").read_text())
+    d = json.loads((s / "windows.json").read_text(encoding="utf-8"))
     print(f"snapshot {s}  (server pid {d.get('server_pid')}, {d.get('source', 'save')})")
     for w in d["windows"]:
         print(f"  win {w['wid']:>2}  {label(w)[:26]:<26} {w.get('cwd') or '?'}")
@@ -289,7 +289,7 @@ def titled_by_agent(wid: int) -> bool:
 
 def cmd_restore(a) -> int:
     s = pick(a.snap)
-    d = json.loads((s / "windows.json").read_text())
+    d = json.loads((s / "windows.json").read_text(encoding="utf-8"))
     only = {int(x) for x in a.only.split(",")} if a.only else None
     live = live_agent_sessions()
     plan = []
@@ -337,7 +337,7 @@ LOG = re.compile(r"^(\d\d:\d\d:\d\d) (\w+): (.*)$")
 
 def dated_log(path: Path) -> list[tuple[datetime, str, str]]:
     """server.log has times only; date them backwards from the file's mtime."""
-    lines = [m.groups() for l in path.read_text(errors="replace").splitlines() if (m := LOG.match(l))]
+    lines = [m.groups() for l in path.read_text(encoding="utf-8", errors="replace").splitlines() if (m := LOG.match(l))]
     day = datetime.fromtimestamp(path.stat().st_mtime).date()
     out, prev = [], None
     for t, who, msg in reversed(lines):
@@ -356,7 +356,7 @@ def server_record(keeper_pid: int | None) -> dict | None:
         return None
     for f in sorted(records_dir().glob(f"*-{keeper_pid}.json"), reverse=True):
         try:
-            return json.loads(f.read_text()) | {"path": str(f)}
+            return json.loads(f.read_text(encoding="utf-8")) | {"path": str(f)}
         except (OSError, ValueError):
             continue
     return None
@@ -373,7 +373,7 @@ def transcripts_since(since: datetime):
         if f.stat().st_mtime < cutoff:
             continue
         cwd, ent, ts, title, meta = None, None, [], None, {}
-        with open(f, errors="replace") as fh:
+        with open(f, encoding="utf-8", errors="replace") as fh:
             for l in fh:
                 try:
                     j = json.loads(l)
@@ -455,7 +455,7 @@ def cmd_forensic(a) -> int:
     def argv_of(pid):
         """a ps listing in some transcript may show how this claude was started"""
         pat = re.compile(rf"(?<!\d){pid} (claude [^\\\n\"]*)")
-        hits = [m[1] for f, *_ in trs.values() for m in pat.finditer(f.read_text(errors="replace"))]
+        hits = [m[1] for f, *_ in trs.values() for m in pat.finditer(f.read_text(encoding="utf-8", errors="replace"))]
         return max(hits, key=len).split() if hits else ["claude"]   # the least cut-off one
 
     def with_meta(argv, meta):
@@ -535,7 +535,7 @@ def cmd_forensic(a) -> int:
     if a.write:
         d = new_dir(snap["saved"])
         snap["saved"] = d.name
-        (d / "windows.json").write_text(json.dumps(snap, indent=1, ensure_ascii=False))
+        (d / "windows.json").write_text(json.dumps(snap, indent=1, ensure_ascii=False), encoding="utf-8")
         print(f"written {d}; `pys-sessions restore {d.name}` to open it")
     return 0
 
@@ -576,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sp.add_parser("forensic"); p.add_argument("--write", action="store_true"); p.set_defaults(f=cmd_forensic)
     sp.add_parser("install").set_defaults(f=cmd_install)
     a = ap.parse_args(argv)
+    utf8_pipes()
     return a.f(a)
 
 

@@ -46,7 +46,7 @@ def test_rpc_smoke(tmp_path: Path) -> None:
 
     def pys(*args: str, check: bool = True) -> subprocess.CompletedProcess:
         r = subprocess.run(PYS + list(args), env=env, cwd=work, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, encoding="utf-8", timeout=30)   # pys prints UTF-8
         if check and r.returncode:
             raise AssertionError(f"pys {args} -> {r.returncode}\n{r.stdout}\n{r.stderr}\n"
                                  + (run_dir / "server.log").read_text(errors="replace"))

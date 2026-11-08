@@ -41,7 +41,7 @@ def cmd_init(reset: bool) -> int:
             keep = p.with_name(f"{p.name}.{time.strftime('%Y%m%d-%H%M%S')}.v{n}")
         p.rename(keep)
         print(f"kept {keep}")
-    p.write_text(SAMPLE.read_text())
+    p.write_bytes(SAMPLE.read_bytes())
     print(f"wrote {p} (the sample); C-a R (or `pys reload`) applies it")
     return 0
 
@@ -98,7 +98,7 @@ def cmd_check() -> int:
     r.ok(f"config {p}")
     ns: dict = {"cmd": config.cmd, "load": config.load, "clock": config.clock}
     try:
-        exec(compile(p.read_text(), str(p), "exec"), ns)
+        exec(compile(p.read_bytes(), str(p), "exec"), ns)  # UTF-8 source, any locale
     except Exception as e:
         tb = e.__traceback__
         while tb and tb.tb_next:

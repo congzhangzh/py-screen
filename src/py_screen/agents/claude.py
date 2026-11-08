@@ -27,7 +27,7 @@ def home() -> Path:
 def session_of(pid: int) -> dict | None:
     """The session file of the claude with this pid, or None."""
     try:
-        d = json.loads((home() / "sessions" / f"{pid}.json").read_text())
+        d = json.loads((home() / "sessions" / f"{pid}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return d if isinstance(d, dict) and d.get("sessionId") else None

@@ -44,6 +44,20 @@ def nested_in() -> str | None:
     return None
 
 
+def utf8_pipes() -> None:
+    """What the pys commands print into a pipe or a file is UTF-8, on every system and every
+    Python: `pys ls --json` read by a script, `pys capture` by an agent. Python 3.14 would
+    use the locale's code page on Windows (GBK on a Chinese one), which garbles what the
+    reader decodes as UTF-8 and fails on a title it has no character for; 3.15 is UTF-8
+    already (PEP 686). A console is left alone: Python writes to it in UTF-16."""
+    for s in (sys.stdout, sys.stderr):
+        try:
+            if not s.isatty() and s.encoding.lower().replace("-", "") != "utf8":
+                s.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def rpc(**msg) -> dict:
     reply = asyncio.run(proto.rpc(msg))
     if not reply.get("ok"):
@@ -92,13 +106,14 @@ def main() -> None:
     sub.add_parser("_keeper")
     sub.add_parser("_brain")
     a = p.parse_args()
+    utf8_pipes()     # the server log too: the keeper and brain write it as stderr
 
     if a.cmd == "doctor":
         from . import doctor
         sys.exit(doctor.cmd_init(a.reset) if a.init or a.reset else doctor.cmd_check())
     if a.cmd == "sample-config":                   # the file ships in the wheel, next to us
         from pathlib import Path
-        sys.stdout.write((Path(__file__).parent / "sample_config.py").read_text())
+        sys.stdout.write((Path(__file__).parent / "sample_config.py").read_text(encoding="utf-8"))
     elif a.cmd == "_keeper":
         from . import keeper
         keeper.main()

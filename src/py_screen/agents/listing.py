@@ -25,6 +25,7 @@ from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
 
+from .. import utf8_pipes
 from . import claude, gitinfo, procs
 
 SKILLS = Path(__file__).parent / "skills"
@@ -214,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dir", default="~/.claude/skills")
     p.set_defaults(f=cmd_skills)
     a = ap.parse_args(argv)
+    utf8_pipes()
     return a.f(a)
 
 
