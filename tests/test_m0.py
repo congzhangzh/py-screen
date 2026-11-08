@@ -67,9 +67,15 @@ def test_reload_keeps_vim(sess, record_property):
     t = attach(sess)
     t.wait_for("$ ")
     t.send("vim --clean -N\r")
-    t.wait_for("~")
+    # Wait for vim's own screen. "~" was matched at once by the caption's folder
+    # (" 0 sh  ~/..."), so the keys went out before vim ran: the tty echoed them on the
+    # shell's screen, and "hello-vim" then matched that echo, not vim. A busy CI runner
+    # reloaded while vim had taken only the "i" (-- INSERT --, empty buffer), and the new
+    # brain's capture rightly showed just that.
+    t.wait_for("VIM - Vi IMproved")
     t.send("ihello-vim\x1b")
-    t.wait_for("hello-vim")
+    # vim took every key, the Esc too: normal mode, the cursor on the last letter
+    t.wait_until(lambda txt: "hello-vim" in txt and "1,9 " in txt and "-- INSERT --" not in txt)
     info = json.loads(sess.pys("ls", "--json"))
     shell = info["windows"][0]["pid"]
     vim = vim_pid(shell)
