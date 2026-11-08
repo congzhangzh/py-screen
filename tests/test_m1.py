@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 import time
 
 import pyte
@@ -178,7 +180,13 @@ def test_overlay_owns_the_screen(tmp_path):
         t.wait_for(" pys ")
         sess.pys("new")
         t.wait_for(" 1 ")
-        t.send("while :; do echo TICKTICK; sleep 0.05; done\r")
+        # One process ticks, not a shell loop: a ^C that lands as one of the loop's
+        # `sleep`s ends goes to that ending process and is lost, the loop runs on (dash,
+        # in a bare pty too). One process lives until the ^C, so the ^C always ends it.
+        tick = tmp_path / "tick.py"
+        tick.write_text("import time\nwhile 1:\n    print('TICKTICK', flush=True)\n"
+                        "    time.sleep(0.05)\n")
+        t.send(f"{shlex.quote(sys.executable)} {shlex.quote(str(tick))} 2>/dev/null\r")
         t.wait_for("TICKTICK")
         for key, mark in (("w", "Num  Title"), ("?", "py-screen help")):
             t.send(C_RB + key)
