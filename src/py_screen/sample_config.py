@@ -271,5 +271,8 @@ BIND = {
 # the brain starts, with PYS_EVENT=change; and once more right before `pys kill` or prefix Q
 # end every window, with PYS_EVENT=kill, while they all still run. PYS_DIR is set, so `pys
 # ls --json` in it lists this session. One run at a time; its output goes to server.log.
-# ON_CHANGE = ["pys-sessions", "save", "--quiet"]    # e.g. snapshot the windows to restore
+# ON_CHANGE = ["pys-sessions", "save", "--quiet"]    # snapshot the windows, to restore them
+#                                                     # after pys died (comes with pys)
 # KILL_HOOK_TIMEOUT = 5   # seconds a kill waits for ON_CHANGE before it ends the windows
+# SESSIONS_KEEP_ENV = []  # pys-sessions: variables of a claude's environment that its
+#                         # resume gets back (only these: an environment holds secrets)

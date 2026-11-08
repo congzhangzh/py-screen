@@ -21,6 +21,8 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
     ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # run after windows change and
                                               # before `pys kill` / prefix Q ends them
     KILL_HOOK_TIMEOUT = 5                     # seconds a kill waits for ON_CHANGE
+    SESSIONS_KEEP_ENV = ["MY_VAR"]            # pys-sessions: variables a resumed claude
+                                              # gets back from the one that ran
 """
 
 from __future__ import annotations
@@ -117,6 +119,7 @@ class Config:
     show_widgets: bool = True     # the status line's right side; prefix S toggles it
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
+    sessions_keep_env: list[str] = field(default_factory=list)   # for pys-sessions only
 
 
 def default() -> Config:
@@ -164,6 +167,11 @@ def load_config() -> Config:
         cfg.kill_hook_timeout = max(0.0, float(ns.get("KILL_HOOK_TIMEOUT", KILL_HOOK_TIMEOUT)))
     except (TypeError, ValueError):
         cfg.error = "config error: KILL_HOOK_TIMEOUT"
+    keep = ns.get("SESSIONS_KEEP_ENV", [])
+    if isinstance(keep, (list, tuple)) and all(isinstance(k, str) for k in keep):
+        cfg.sessions_keep_env = list(keep)
+    else:
+        cfg.error = "config error: SESSIONS_KEEP_ENV"
     return cfg
 
 

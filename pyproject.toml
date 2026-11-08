@@ -39,6 +39,8 @@ Issues = "https://github.com/congzhangzh/py-screen/issues"
 
 [project.scripts]
 pys = "py_screen:main"
+pys-agents = "py_screen.agents.listing:main"      # which window runs which Claude Code session
+pys-sessions = "py_screen.agents.sessions:main"  # save the windows, restore them after pys died
 
 [build-system]
 # setuptools, not uv_build: uv_build has no C extensions. setup.py adds _vterm.
@@ -47,6 +49,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"py_screen.agents" = ["skills/*/SKILL.md"]   # `pys-agents skills --install` links them
 
 [dependency-groups]
 dev = [
