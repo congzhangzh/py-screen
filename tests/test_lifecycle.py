@@ -115,7 +115,7 @@ def test_the_server_record_outlives_a_kill(tmp_path: Path) -> None:
         new_in(sess, work)
         new_in(sess, work, "sleep", "300")
         sess.pys("title", "--wid", "0", "agent")
-        servers = sess.dir / "state" / "servers"
+        servers = sess.dir / "state" / "pys" / "servers"
         old = json.loads(sess.pys("ls", "--json"))["pid"]
         sess.pys("reload")                                 # a new brain, the same server:
         brain = wait(lambda: (p := ls_pid(sess)) != old and p)

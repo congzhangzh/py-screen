@@ -36,6 +36,7 @@ def test_rpc_smoke(tmp_path: Path) -> None:
     work = tmp_path / "work"
     work.mkdir()
     env = dict(os.environ, PYS_DIR=str(run_dir), PYS_CONFIG=str(tmp_path / "none.py"),
+               XDG_STATE_HOME=str(tmp_path / "state"),
                PYS_PREFIX="C-]")
     for k in ("PYS_WINDOW", "PYS_SESSION"):                      # run from inside a pys window
         env.pop(k, None)

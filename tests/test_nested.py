@@ -28,7 +28,7 @@ def d():
 def env_in_window(d, **extra) -> dict:
     # d from session_dir(), not pytest's tmp_path: macOS's tmp_path is longer than the
     # 104 bytes a socket path may have there, and pys stops at that before the guard
-    env = dict(os.environ, PYS_DIR=str(d), PYS_WINDOW="3")
+    env = dict(os.environ, PYS_DIR=str(d), PYS_WINDOW="3", XDG_STATE_HOME=str(d / "state"))
     env.pop("PYS_SESSION", None)
     return {**env, **extra}
 

@@ -36,7 +36,8 @@ class Session:
 
     def __init__(self, tag: str = "t", shell: str = "/bin/sh") -> None:
         self.dir = session_dir(tag)
-        self.env = dict(os.environ, PYS_DIR=str(self.dir), SHELL=shell,
+        self.env = dict(os.environ, PYS_DIR=str(self.dir),
+                        XDG_STATE_HOME=str(self.dir / "state"), SHELL=shell,
                         TERM="xterm-256color", PS1="$ ", PYS_PREFIX="C-]",
                         PYS_CONFIG="/nonexistent")
         self.env.pop("PROMPT_COMMAND", None)

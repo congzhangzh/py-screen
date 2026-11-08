@@ -212,14 +212,16 @@ were, so a tool can bring them back:
   inside it reaches this session; its output goes to `server.log`.
 - **The server record**: on the same changes and at a kill, the brain writes
   `$XDG_STATE_HOME/pys/servers/<start YYYYMMDD-HHMMSS>-<server pid>.json` (default
-  `~/.local/state`; with `PYS_DIR` set, `$PYS_DIR/state/servers/` instead): the server's pid,
-  `started`, `updated`, `ended` (set when it ends by a kill, `Q` or its last window, then
-  with no windows left; `null` while it runs or if it died), and each window's `wid`, `pid`,
+  `~/.local/state`, a session with its own `PYS_DIR` too, since the runtime dir is gone at the
+  next boot): the server's pid, `started`, `updated`, `ended` (set when it ends by a kill or
+  `Q`, with the windows it ended; by its last window, with none; `null` while it runs or if
+  it died), and each window's `wid`, `pid`,
   `cmd`, `cwd` (its shell's current directory), `name`, `title`, `agent_title`,
   `agent_owner`. One file per server life, rewritten whole (tmp + rename), never deleted.
 
 ```python
-ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # a snapshot of the windows on each change
+ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # your own script: e.g. one that keeps each
+                                                  # window's folder, agent session and screen
 KILL_HOOK_TIMEOUT = 5
 ```
 

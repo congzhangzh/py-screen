@@ -1565,13 +1565,11 @@ class Brain:
         return True
 
     def record_path(self) -> Path:
-        """$XDG_STATE_HOME/pys/servers/<start>-<keeper pid>.json: one file per server life.
-        With PYS_DIR (tests, a second session) under $PYS_DIR/state instead."""
-        if d := os.environ.get("PYS_DIR"):
-            base = Path(d) / "state"
-        else:
-            base = Path(os.environ.get("XDG_STATE_HOME")
-                        or os.path.expanduser("~/.local/state")) / "pys"
+        """$XDG_STATE_HOME/pys/servers/<start>-<keeper pid>.json: one file per server life,
+        a second session's (PYS_DIR) too: the runtime dir is gone at the next boot, this
+        isn't. Tests point XDG_STATE_HOME at their own dir."""
+        base = Path(os.environ.get("XDG_STATE_HOME")
+                    or os.path.expanduser("~/.local/state")) / "pys"
         start = time.strftime("%Y%m%d-%H%M%S", time.localtime(self.server["started"]))
         return base / "servers" / f"{start}-{self.server['pid']}.json"
 
