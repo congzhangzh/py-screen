@@ -199,10 +199,10 @@ Windows they use psutil (`uv tool install 'py-screen-mux[stats]'`) and show noth
 
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
 
-### What the windows were: ON_CHANGE
+### What the windows were: ON_CHANGE and the server record
 
-`pys kill` and prefix `Q` end every window and delete the layout. A command of yours can
-keep what they were, so a tool can bring them back:
+`pys kill` and prefix `Q` end every window and delete the layout. Two things keep what they
+were, so a tool can bring them back:
 
 - **`ON_CHANGE`** in the config, a command (an argv list), run about 2 s after a change (a
   window opens or exits, a title changes, the brain starts) with `PYS_EVENT=change`, and once
@@ -210,6 +210,13 @@ keep what they were, so a tool can bring them back:
   for it at most `KILL_HOOK_TIMEOUT` seconds (5), then ends as before. One run at a time
   (changes during a run give one more run after it); `PYS_DIR` is set, so `pys ls --json`
   inside it reaches this session; its output goes to `server.log`.
+- **The server record**: on the same changes and at a kill, the brain writes
+  `$XDG_STATE_HOME/pys/servers/<start YYYYMMDD-HHMMSS>-<server pid>.json` (default
+  `~/.local/state`; with `PYS_DIR` set, `$PYS_DIR/state/servers/` instead): the server's pid,
+  `started`, `updated`, `ended` (set when it ends by a kill, `Q` or its last window, then
+  with no windows left; `null` while it runs or if it died), and each window's `wid`, `pid`,
+  `cmd`, `cwd` (its shell's current directory), `name`, `title`, `agent_title`,
+  `agent_owner`. One file per server life, rewritten whole (tmp + rename), never deleted.
 
 ```python
 ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # a snapshot of the windows on each change

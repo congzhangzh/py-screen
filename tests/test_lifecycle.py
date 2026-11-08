@@ -1,5 +1,5 @@
 """What pys keeps of its windows: ON_CHANGE runs after they change and before a kill
-ends them."""
+ends them, and the server record outlives the server."""
 
 from __future__ import annotations
 
@@ -59,6 +59,12 @@ def new_in(sess: Session, cwd: Path, *argv: str) -> dict:
     return json.loads(r.stdout)
 
 
+def ls_pid(sess: Session) -> int | None:
+    r = subprocess.run(PYS + ["ls", "--json"], env=sess.env, capture_output=True, text=True,
+                       timeout=15)
+    return json.loads(r.stdout)["pid"] if r.returncode == 0 else None
+
+
 def test_on_change_after_a_new_window(tmp_path: Path) -> None:
     sess = hooked(tmp_path, "chg")
     try:
@@ -98,4 +104,32 @@ def test_prefix_q_runs_on_change_first(tmp_path: Path) -> None:
         assert events(tmp_path)[-1] == "kill 1"
     finally:
         t.close()
+        sess.kill()
+
+
+def test_the_server_record_outlives_a_kill(tmp_path: Path) -> None:
+    sess = Session("rec")                                  # no ON_CHANGE: the record anyway
+    work = tmp_path / "work"
+    work.mkdir()
+    try:
+        new_in(sess, work)
+        new_in(sess, work, "sleep", "300")
+        sess.pys("title", "--wid", "0", "agent")
+        servers = sess.dir / "state" / "servers"
+        old = json.loads(sess.pys("ls", "--json"))["pid"]
+        sess.pys("reload")                                 # a new brain, the same server:
+        brain = wait(lambda: (p := ls_pid(sess)) != old and p)
+        wait(lambda: [json.loads(f.read_text())["brain_pid"]   # the same file
+                      for f in servers.glob("*.json")] == [brain])
+        sess.pys("kill")
+        files = list(servers.glob("*.json"))
+        assert len(files) == 1, files
+        rec = json.loads(files[0].read_text())
+        assert rec["ended"] is not None
+        assert rec["dir"] == str(sess.dir)
+        assert [w["cmd"] for w in rec["windows"]][1] == ["sleep", "300"]
+        assert {w["cwd"] for w in rec["windows"]} == {str(work.resolve())}
+        assert rec["windows"][0]["agent_title"] == "agent"
+        assert not (sess.dir / "layout.json").exists()     # the kill took that one
+    finally:
         sess.kill()

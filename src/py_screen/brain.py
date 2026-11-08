@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from wcwidth import wcswidth
 
@@ -51,8 +52,8 @@ KEY_GRACE = 0.1                  # after a key, hidden windows wait this long: n
 SYNC_MODES = (1, 2004)
 TITLE_MAX = 200                  # characters kept of a `pys title`
 OWNER_EVERY = 2.0                # seconds between checks that an agent title's owner runs
-CHANGE_DELAY = 2.0               # seconds from a window change to ON_CHANGE: a burst
-                                 # (a reload, a split) gives one run
+CHANGE_DELAY = 2.0               # seconds from a window change to the server record and
+                                 # ON_CHANGE: a burst (a reload, a split) gives one run
 HOOK_TIMEOUT = 60.0              # an ON_CHANGE run after a change is killed after this
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
                                  # full-screen app without mouse
@@ -237,6 +238,8 @@ class Brain:
         self.parse_next = 0                      # round robin start, so no window starves
         self.redraw: set[int] = set()            # windows whose pane is drawn whole next frame
         self.paste_buf = ""                      # the last copy (prefix ] pastes it)
+        # The server (keeper) this brain serves: its hello says; an older keeper doesn't.
+        self.server = {"pid": os.getppid(), "started": time.time()}
         self.change_handle: asyncio.TimerHandle | None = None
         self.hook_task: asyncio.Task | None = None
         self.hook_again = False                  # a change came while ON_CHANGE ran
@@ -286,6 +289,8 @@ class Brain:
     def on_keeper_ctl(self, m: dict) -> None:
         op = m["op"]
         if op == "hello":
+            if "pid" in m:
+                self.server = {"pid": m["pid"], "started": m["started"]}
             for x in m["windows"]:
                 self.add_window(x)
         elif op == "replayed":
@@ -329,6 +334,9 @@ class Brain:
                 p.wid = self.hidden_candidate()
         if not self.order:
             log("last window exited; shutting down")
+            if not self.ending:                   # after a kill: its record stays as it is
+                self.ending = True
+                self.write_record(ended=True)
             self.broadcast_ctl({"op": "bye"})
             self.to_keeper(proto.pack_ctl({"op": "shutdown"}))
             self.state_path.unlink(missing_ok=True)
@@ -1483,11 +1491,11 @@ class Brain:
             return {"ok": True}
         return {"ok": False, "error": f"unknown command {cmd!r}"}
 
-    # ---- ON_CHANGE: a command that keeps what the windows were ---------------
+    # ---- what the windows were: ON_CHANGE and the server record ----------------
     def changed(self) -> None:
         """A window came or went, a title changed, a brain started: in CHANGE_DELAY,
-        run ON_CHANGE. The first change of a burst starts the wait; the others ride
-        along."""
+        write the server record and run ON_CHANGE. The first change of a burst starts
+        the wait; the others ride along."""
         if self.ending or self.change_handle is not None:
             return
         self.change_handle = asyncio.get_running_loop().call_later(
@@ -1495,6 +1503,7 @@ class Brain:
 
     def on_changed(self) -> None:
         self.change_handle = None
+        self.write_record()
         if not self.cfg.on_change:
             return
         if self.hook_task and not self.hook_task.done():
@@ -1533,15 +1542,16 @@ class Brain:
             log(f"ON_CHANGE ({event}) exited {code}")
 
     async def before_end(self) -> bool:
-        """pys kill / prefix Q, before the keeper ends every window: run ON_CHANGE with
-        PYS_EVENT=kill while they all still run, for at most KILL_HOOK_TIMEOUT. False if
-        an end is under way already."""
+        """pys kill / prefix Q, before the keeper ends every window: write the record and
+        run ON_CHANGE with PYS_EVENT=kill while they all still run, for at most
+        KILL_HOOK_TIMEOUT. False if an end is under way already."""
         if self.ending:
             return False
         self.ending = True
         if self.change_handle:
             self.change_handle.cancel()
             self.change_handle = None
+        self.write_record(ended=True)
         if not self.cfg.on_change:
             return True
         loop = asyncio.get_running_loop()
@@ -1553,6 +1563,40 @@ class Brain:
         log("ON_CHANGE before the kill")
         await self.run_hook("kill", max(0.0, deadline - loop.time()))
         return True
+
+    def record_path(self) -> Path:
+        """$XDG_STATE_HOME/pys/servers/<start>-<keeper pid>.json: one file per server life.
+        With PYS_DIR (tests, a second session) under $PYS_DIR/state instead."""
+        if d := os.environ.get("PYS_DIR"):
+            base = Path(d) / "state"
+        else:
+            base = Path(os.environ.get("XDG_STATE_HOME")
+                        or os.path.expanduser("~/.local/state")) / "pys"
+        start = time.strftime("%Y%m%d-%H%M%S", time.localtime(self.server["started"]))
+        return base / "servers" / f"{start}-{self.server['pid']}.json"
+
+    def write_record(self, ended: bool = False) -> None:
+        """What each window is (command, folder, titles), in a file that outlives the
+        server: layout.json goes with a kill, this never does. Rewritten whole on each
+        change (tmp + replace, so a reader never sees half of it)."""
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
+        now = time.time()
+        rec = {"pid": self.server["pid"], "brain_pid": os.getpid(),
+               "dir": str(proto.runtime_dir()),
+               "started": stamp(self.server["started"]), "updated": stamp(now),
+               "ended": stamp(now) if ended else None,
+               "windows": [{"wid": w.wid, "pid": w.pid, "cmd": w.cmd, "cwd": w.cwd(),
+                            "name": w.name, "title": w.title, "agent_title": w.agent_title,
+                            "agent_owner": w.owner}
+                           for w in (self.wins[i] for i in self.order)]}
+        path = self.record_path()
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(rec, indent=1))
+            os.replace(tmp, path)
+        except OSError as e:                      # a full disk must not stop the brain
+            log("server record:", e)
 
     # ---- lifecycle ----------------------------------------------------------
     def quit(self, code: int) -> None:

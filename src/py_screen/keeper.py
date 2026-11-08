@@ -50,6 +50,7 @@ class Keeper:
         self.paused = False
         self.stopping = asyncio.Event()
         self.brain_starts: list[float] = []
+        self.started = time.time()               # names the brain's server record
 
     # ---- ptys ---------------------------------------------------------
     def spawn(self, cmd: list[str], cwd: str | None, cols: int, rows: int) -> Win:
@@ -148,7 +149,8 @@ class Keeper:
         self.resume()
         hello = [{"wid": x.wid, "pid": x.pid, "cols": x.cols, "rows": x.rows, "cmd": x.cmd}
                  for x in self.wins.values()]
-        w.write(proto.pack_ctl({"op": "hello", "windows": hello, "next_wid": self.next_wid}))
+        w.write(proto.pack_ctl({"op": "hello", "windows": hello, "next_wid": self.next_wid,
+                                "pid": os.getpid(), "started": self.started}))
         for x in self.wins.values():                # replay: the brain rebuilds its screens
             if x.ring:
                 w.write(proto.pack(proto.DATA, x.wid, bytes(x.ring)))
