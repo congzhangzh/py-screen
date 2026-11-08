@@ -50,6 +50,8 @@ def test_attach_detach_reattach(sess):
     t2.wait_for("hi-42")
     t2.send("exit\r")
     t2.wait_until(lambda txt: " 0 sh " not in txt and "second" in txt)  # window 1 is current
+    # focus moved by itself: keys are held a moment (EXIT_GUARD), so wait until it says so no more
+    t2.wait_until(lambda txt: "ended:" not in txt)
     t2.send("exit\r")
     assert t2.wait_exit() == 0
     assert b"[session ended]" in t2.raw
