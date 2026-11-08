@@ -55,14 +55,13 @@ def describe(ctx: dict) -> str:
 
 def caption_text(ctx: dict) -> str:
     """The caption text: the start folder first, then, when an agent works elsewhere, ✎ and
-    that repo (only its name when it sits beside the start folder, as worktrees do), then
-    the git state: `~/src/app ✎ app-fix  fix-x wt 2 mod`; `~/notes` outside a repo."""
+    that repo, both as ~/… (or /…), then the git state:
+    `~/src/app ✎ ~/src/app-fix  fix-x wt 2 mod`; `~/notes` outside a repo."""
     from .listing import short_path
     start, folder, by_agent, git = look(ctx)
     text = short_path(start)
     if by_agent and folder and os.path.realpath(folder) != os.path.realpath(start or ""):
-        near = start and os.path.dirname(os.path.realpath(folder)) == os.path.dirname(os.path.realpath(start))
-        text += " ✎ " + (os.path.basename(folder) if near else short_path(folder))
+        text += " ✎ " + short_path(folder)       # the same form as the start: ~/… or /…
     return f"{text}  {git}" if git else text
 
 

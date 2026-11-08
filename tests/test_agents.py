@@ -367,10 +367,11 @@ def test_caption_names_where_the_agent_works(tmp_path: Path, monkeypatch) -> Non
     from py_screen.agents import widget
     sess = setup(tmp_path, "cp")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", sess.env["CLAUDE_CONFIG_DIR"])
+    monkeypatch.setenv("HOME", str(tmp_path))                 # paths show as ~/…
     repo, wt = make_repo(tmp_path)
     try:
-        assert widget.caption_text({"cwd": str(tmp_path)}) == str(tmp_path)   # no repo
-        assert widget.caption_text({"cwd": str(repo)}).endswith("repo  main")
+        assert widget.caption_text({"cwd": str(tmp_path / "bin")}) == "~/bin"   # no repo
+        assert widget.caption_text({"cwd": str(repo)}) == "~/repo  main"
         win = start_claude(sess, repo, "--name", "helper")
         s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
         t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
@@ -378,8 +379,8 @@ def test_caption_names_where_the_agent_works(tmp_path: Path, monkeypatch) -> Non
             f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
                     "name": "Edit", "input": {"file_path": str(wt / "a.txt")}}]}}) + "\n")
         text = widget.caption_text({"cwd": str(repo), "pid": win["pid"]})
-        # where it started first (its Bash goes back there), then where it works: the
-        # worktree sits beside it, so only its name
-        assert text == f"{repo.resolve()} ✎ repo-topic  topic wt"
+        # where it started first (its Bash goes back there), then where it works, both in
+        # the same form (here HOME is tmp_path: ~/repo, ~/repo-topic)
+        assert text == "~/repo ✎ ~/repo-topic  topic wt"
     finally:
         sess.kill()

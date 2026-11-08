@@ -209,11 +209,11 @@ the repo it last wrote in (✎) when that is elsewhere:
 
 ```python
 from py_screen.agents.widget import caption
-CAPTION = caption()        # " 3 build fix  ~/src/app ✎ app-fix  fix-build wt 1 mod "
+CAPTION = caption()        # " 3 build fix  ~/src/app ✎ ~/src/app-fix  fix-build wt 1 mod "
 ```
 
 It reads: started in `~/src/app` (its Bash goes back there, and a resume runs there), works in
-`app-fix` beside it (✎), on branch `fix-build`, a linked worktree (`wt`), 1 tracked file
+`~/src/app-fix` (✎), on branch `fix-build`, a linked worktree (`wt`), 1 tracked file
 modified. Also: `3 new` untracked files, `↑2 ↓5` commits ahead of / behind the upstream (as of
 the last fetch), `@1f0e2c1` a detached HEAD; nothing after the branch: clean.
 
