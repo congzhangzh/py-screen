@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build a ready-to-use py-screen for this OS: one archive with its own Python, pys and its
-dependencies, nothing to install. Unpack it anywhere and run bin/pys (pys.cmd on Windows).
+dependencies, nothing to install. Unpack it anywhere and run bin/pys (pys.exe on Windows).
 
 Usage: release/bundle.py --wheels DIR --version V [--out DIR]
 
@@ -43,11 +43,29 @@ done
 here=$(cd "$(dirname "$self")/.." && pwd)
 exec "$here/python/bin/python3" -m MODULE "$@"
 """
-# bin/<name> (<name>.cmd on Windows) → the module it runs; every system gets all three
+# bin/<name> (<name>.exe on Windows) → the module it runs; every system gets all three
 LAUNCHERS = {"pys": "py_screen", "pys-agents": "py_screen.agents.listing",
              "pys-sessions": "py_screen.agents.sessions"}
 
-LAUNCHER_CMD = """@"%~dp0python\\python.exe" -m MODULE %*\r\n"""
+# Windows: the launcher pip itself writes entry points with (distlib's), its shebang naming
+# the folder's own Python relative to the exe (<launcher_dir>), then a zip with __main__.py.
+# Not a .cmd: cmd.exe parses a batch file's arguments again (`%VAR%` expands, `"` and `&`
+# can start another command, a CR ends the line), and `pys send` carries any text an agent
+# types. The exe hands the command line to Python as it came.
+DISTLIB = "distlib==0.4.0"
+LAUNCHER_MAIN = "import runpy\nrunpy.run_module({module!r}, run_name='__main__', alter_sys=True)\n"
+
+
+def win_launcher(module: str) -> bytes:
+    import io
+    import zipfile as zf
+    exe = {"AMD64": "t64.exe", "ARM64": "t64-arm.exe"}[platform.machine().upper()]
+    where = run("uv", "run", "--no-project", "--with", DISTLIB, "python", "-c",
+                "import distlib, pathlib; print(pathlib.Path(distlib.__file__).parent)").strip()
+    z = io.BytesIO()
+    with zf.ZipFile(z, "w") as f:
+        f.writestr("__main__.py", LAUNCHER_MAIN.format(module=module))
+    return (Path(where) / exe).read_bytes() + b"#!<launcher_dir>\\python\\python.exe\r\n" + z.getvalue()
 
 README = """py-screen {version} for {plat}, ready to use
 ==================================================
@@ -172,8 +190,8 @@ def main() -> None:
 
         if WIN:
             for n, module in LAUNCHERS.items():
-                (root / f"{n}.cmd").write_bytes(LAUNCHER_CMD.replace("MODULE", module).encode())
-            run_cmd, bindir, link = r"pys.cmd", "folder itself", ""
+                (root / f"{n}.exe").write_bytes(win_launcher(module))
+            run_cmd, bindir, link = r"pys.exe", "folder itself", ""
             pip = r"python\python.exe -m pip"
             site, pylicense = "Lib/site-packages", "LICENSE.txt"
         else:

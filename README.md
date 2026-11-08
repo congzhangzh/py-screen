@@ -453,7 +453,7 @@ Or take the **ready-to-use bundle** for your system from the
 [release](https://github.com/congzhangzh/py-screen/releases): `pys-<version>-<os>-<arch>.tar.gz`
 (`.zip` on Windows) holds its own Python 3.14, pys and its dependencies (pyte, psutil), so
 there is nothing to install and no network needed. Unpack it anywhere and run `bin/pys`
-(`pys.cmd` on Windows); the folder still works after you move it. `release/bundle.py` builds
+(`pys.exe` on Windows; `pys-agents` and `pys-sessions` beside it); the folder still works after you move it. `release/bundle.py` builds
 it: python-build-standalone's CPython (the one uv installs) with the release's wheel
 installed into it, a launcher in place of pip's scripts (those hold an absolute path), and
 Tk, IDLE and the C headers left out (about 35 MB packed). On macOS, a browser download is

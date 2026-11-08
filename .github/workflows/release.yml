@@ -237,10 +237,11 @@ jobs:
           ls -l "$b"
           out="$RUNNER_TEMP/sample.py"
           if [ "$RUNNER_OS" = Windows ]; then
-            cmd //c "$(cygpath -w "$b/pys.cmd")" sample-config > "$out"
+            "$b/pys.exe" sample-config > "$out"
             grep -q "sample pys config" "$out"
-            # what pys.cmd runs; Windows keeps its PATH (System32), the Python is by path
-            PYS_TERM=vterm "$py" release/smoke.py "$b/python/python.exe" -m py_screen
+            "$b/pys-agents.exe" skills | grep -q pys-drive        # the agent tools are there too
+            # Windows keeps its PATH (System32); the launcher finds its Python by its own folder
+            PYS_TERM=vterm "$py" release/smoke.py "$b/pys.exe"
           else
             "$b/bin/pys" sample-config > "$out"
             grep -q "sample pys config" "$out"
@@ -314,7 +315,7 @@ jobs:
               echo "| $os | \`uv tool install $base/$whl\` |"
             done
             echo
-            echo "**Ready to use, nothing to install:** each archive holds its own Python 3.14, pys and its dependencies (pyte, psutil). Unpack it anywhere and run \`bin/pys\` (\`pys.cmd\` on Windows); \`README.txt\` inside says more."
+            echo "**Ready to use, nothing to install:** each archive holds its own Python 3.14, pys and its dependencies (pyte, psutil). Unpack it anywhere and run \`bin/pys\` (\`pys.exe\` on Windows); \`README.txt\` inside says more."
             echo
             echo "| System | Download |"
             echo "|---|---|"
