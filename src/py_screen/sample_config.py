@@ -3,8 +3,8 @@
 #     pys sample-config > ~/.config/pys/config.py      # then C-a R (or `pys reload`)
 #
 # The file is plain Python, run on every brain start. pys passes in the helpers cmd(),
-# load() and clock(), and reads WIDGETS, BIND, PREFIX, MOUSE, SCROLLBACK and SHOW_WIDGETS
-# from it.
+# load() and clock(), and reads WIDGETS, BIND, PREFIX, MOUSE, SCROLLBACK, SHOW_WIDGETS,
+# ON_CHANGE and KILL_HOOK_TIMEOUT from it.
 #
 # A status widget is any object with three things, so you can write your own here
 # without changing pys itself:
@@ -266,3 +266,10 @@ BIND = {
 # MOUSE = True         # False: plain drags select text in the terminal again
 # SCROLLBACK = 5000    # rows of history per window; 0 = none
 # SHOW_WIDGETS = True  # False: start with the widgets hidden (prefix S toggles them)
+
+# ON_CHANGE: a command pys runs (about 2 s after) a window opens or exits, a title changes or
+# the brain starts, with PYS_EVENT=change; and once more right before `pys kill` or prefix Q
+# end every window, with PYS_EVENT=kill, while they all still run. PYS_DIR is set, so `pys
+# ls --json` in it lists this session. One run at a time; its output goes to server.log.
+# ON_CHANGE = ["pys-sessions", "save", "--quiet"]    # e.g. snapshot the windows to restore
+# KILL_HOOK_TIMEOUT = 5   # seconds a kill waits for ON_CHANGE before it ends the windows

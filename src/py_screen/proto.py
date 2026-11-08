@@ -69,6 +69,10 @@ async def rpc(msg: dict, timeout: float = 5.0) -> dict:
         await writer.drain()
         _, _, reply = await asyncio.wait_for(read_frame(reader), timeout)
         assert isinstance(reply, dict)
+        while reply.get("op") == "wait":         # the brain needs longer: a kill runs
+            t = timeout + float(reply.get("for", 0))   # ON_CHANGE first
+            _, _, reply = await asyncio.wait_for(read_frame(reader), t)
+            assert isinstance(reply, dict)
         return reply
     finally:
         writer.close()

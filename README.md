@@ -199,6 +199,23 @@ Windows they use psutil (`uv tool install 'py-screen-mux[stats]'`) and show noth
 
 The layout (splits, focus, renamed titles) is saved on every change, so a reload keeps it.
 
+### What the windows were: ON_CHANGE
+
+`pys kill` and prefix `Q` end every window and delete the layout. A command of yours can
+keep what they were, so a tool can bring them back:
+
+- **`ON_CHANGE`** in the config, a command (an argv list), run about 2 s after a change (a
+  window opens or exits, a title changes, the brain starts) with `PYS_EVENT=change`, and once
+  before `pys kill` / `Q` with `PYS_EVENT=kill`, while every window still runs; the kill waits
+  for it at most `KILL_HOOK_TIMEOUT` seconds (5), then ends as before. One run at a time
+  (changes during a run give one more run after it); `PYS_DIR` is set, so `pys ls --json`
+  inside it reaches this session; its output goes to `server.log`.
+
+```python
+ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # a snapshot of the windows on each change
+KILL_HOOK_TIMEOUT = 5
+```
+
 Sockets live in `$XDG_RUNTIME_DIR/pys/` (`PYS_DIR` overrides; keep it short: an AF_UNIX
 path is limited to 108 bytes). Server log: `server.log` in that dir.
 

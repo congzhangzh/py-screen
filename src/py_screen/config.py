@@ -18,6 +18,9 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
                                               # select text in the terminal again
     SCROLLBACK = 5000                         # rows of history per window (the wheel and
                                               # Shift-PgUp scroll it); 0 = none
+    ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # run after windows change and
+                                              # before `pys kill` / prefix Q ends them
+    KILL_HOOK_TIMEOUT = 5                     # seconds a kill waits for ON_CHANGE
 """
 
 from __future__ import annotations
@@ -100,6 +103,7 @@ def clock(fmt: str = "%m-%d %H:%M") -> Clock:
 
 
 SCROLLBACK = 5000      # rows a window keeps; a row costs ~36 bytes per cell it shows
+KILL_HOOK_TIMEOUT = 5.0   # seconds `pys kill` / prefix Q wait for ON_CHANGE before ending
 
 
 @dataclass
@@ -111,6 +115,8 @@ class Config:
     mouse: bool = True
     scrollback: int = SCROLLBACK
     show_widgets: bool = True     # the status line's right side; prefix S toggles it
+    on_change: list[str] | None = None   # argv run after windows change and before a kill
+    kill_hook_timeout: float = KILL_HOOK_TIMEOUT
 
 
 def default() -> Config:
@@ -146,6 +152,18 @@ def load_config() -> Config:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):
         cfg.error = "config error: SCROLLBACK"
+    hook = ns.get("ON_CHANGE")
+    if isinstance(hook, str):
+        hook = [hook]
+    if hook is not None:
+        if isinstance(hook, (list, tuple)) and hook and all(isinstance(a, str) for a in hook):
+            cfg.on_change = [os.path.expanduser(hook[0]), *hook[1:]]
+        else:
+            cfg.error = "config error: ON_CHANGE"
+    try:
+        cfg.kill_hook_timeout = max(0.0, float(ns.get("KILL_HOOK_TIMEOUT", KILL_HOOK_TIMEOUT)))
+    except (TypeError, ValueError):
+        cfg.error = "config error: KILL_HOOK_TIMEOUT"
     return cfg
 
 
