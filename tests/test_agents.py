@@ -13,7 +13,13 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from harness import PYS, Session
+
+# pys-agents and pys-sessions read /proc (README: Linux for now); macOS runs this suite too
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"),
+                                reason="the agent tools read /proc: Linux only")
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys, time, uuid
