@@ -400,11 +400,14 @@ def test_the_psutil_backend_answers_as_proc_does(tmp_path: Path) -> None:
     ps = types.ModuleType("procs_psutil")
     exec(compile(src, "procs_psutil", "exec"), ps.__dict__)
     assert not ps.USE_PROC and procs.USE_PROC
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
-                             cwd=tmp_path, env=dict(os.environ, MY_VAR="kept"))
+    # The child says when it has started: until then the dynamic loader may hold libc.so.6
+    # open for an instant, and two reads one after the other would see two moments (CI)
+    child = subprocess.Popen([sys.executable, "-c", "import time; print('ready', flush=True); "
+                              "time.sleep(30)"], cwd=tmp_path, env=dict(os.environ, MY_VAR="kept"),
+                             stdout=subprocess.PIPE, text=True)
     try:
         me = os.getpid()
-        wait(lambda: procs.cmdline(child.pid)[1:2] == ["-c"])
+        assert child.stdout.readline() == "ready\n"
         for f in ("cmdline", "comm", "cwd", "alive", "open_files"):
             assert getattr(ps, f)(child.pid) == getattr(procs, f)(child.pid), f
         assert ps.environ(child.pid, ["MY_VAR"]) == procs.environ(child.pid, ["MY_VAR"]) \
