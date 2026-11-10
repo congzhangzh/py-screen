@@ -33,6 +33,18 @@ ALT_MODES = {47, 1047, 1049}
 # The most base64 an OSC 52 may carry, about 750 KB of text. An app decides how long the
 # sequence is, so it needs a bound; this is tmux's (input-buffer-size). _vterm.c has it too.
 OSC52_MAX = 1 << 20
+# A notification a program sends its terminal, which pys counts like a bell: OSC 9 (iTerm2's
+# "9;text") and OSC 777 ("777;notify;title;body", urxvt, VTE, Ghostty). OSC 9 followed by a
+# number is ConEmu's family instead (9;4 a progress bar, 9;9 the shell's folder at every
+# prompt), so it is not one. _vterm.c's notifies() keeps the same rule.
+_CONEMU = re.compile(r"[0-9]+(;|\Z)")
+
+
+def notifies(command: int, payload: str) -> bool:
+    """The OSC `command` with this payload (what follows "<command>;") asks for attention."""
+    if command == 9:
+        return bool(payload) and not _CONEMU.match(payload)
+    return command == 777 and (payload == "notify" or payload.startswith("notify;"))
 
 
 def _narrow_class() -> str:
@@ -62,9 +74,11 @@ _ALL_NARROW = re.compile(f"[{_NARROW}]*\\Z")
 # parameters, one final byte. Anything else (":" sub-parameters, ">", controls inside,
 # a sequence cut by the end of a read) goes through pyte's parser, byte by byte.
 _CSI = re.compile(r"\x1b\[(\?)?([0-9;]*)([@-~])")
-# The start of a CSI or an OSC 52, up to the end of the read.
-_CSI_PART = re.compile(r"\x1b(\[\??[0-9;]*|\](5(2)?)?)?\Z")
-_OSC52 = "\x1b]52;"
+# The start of a CSI or of an OSC this stream takes itself, up to the end of the read.
+_CSI_PART = re.compile(r"\x1b(\[\??[0-9;]*|\](5(2)?|9|7(7(7)?)?)?)?\Z")
+# The OSCs pyte's parser would drop that this stream takes: 52 (the clipboard), 9 and 777
+# (notifications); the number, as an int.
+_OSC_TAKEN = re.compile(r"\x1b\](52|9|777);")
 _OSC_END = re.compile("\x07|\x9c|\x1b\\\\")
 # Control characters that act the same in every state of the screen. SI and SO are
 # not here: pyte ignores them in UTF-8 mode only.
@@ -88,6 +102,7 @@ class Screen(pyte.Screen):
         self._saved: tuple[dict, pyte.screens.Cursor] | None = None
         self.history: deque = deque(maxlen=max(0, scrollback))
         self.pushed = 0                       # lines ever pushed (counts on when full)
+        self.alerts = 0                       # bells and notifications (OSC 9, 777)
         super().__init__(columns, lines)
         self._cells: dict[pyte.screens.Char, _Cells] = {}
         Char = pyte.screens.Char
@@ -161,6 +176,10 @@ class Screen(pyte.Screen):
             cur.x = x + take
             i += take
         self.dirty.add(cur.y)
+
+    def bell(self, *args) -> None:
+        """BEL (the C0 control; the one that ends an OSC is the parser's, not this)."""
+        self.alerts += 1
 
     def _push(self, line: dict) -> None:
         if self.history.maxlen:
@@ -251,8 +270,10 @@ class Stream(pyte.ByteStream):
     """pyte.ByteStream, with plain text, the common control characters and complete
     CSI sequences dispatched straight from the top state of pyte's parser.
 
-    OSC 52 is taken here too, since pyte's parser has no hook for it and drops it: `clip`
-    is what followed "52;" in the last one, for the brain to decode (term.osc52).
+    OSC 52, 9 and 777 are taken here too, since pyte's parser has no hook for them and
+    drops them: `clip` is what followed "52;" in the last OSC 52, for the brain to decode
+    (term.osc52); a notification (9, 777: see notifies) counts in the screen's `alerts`,
+    as a bell does.
 
     It also never stops on a sequence it can't apply. pyte raises out of feed() on a
     CSI with more parameters than its handler takes (ESC [ 1 ; 2 B) or a ? its handler
@@ -273,12 +294,13 @@ class Stream(pyte.ByteStream):
         self._tail = ""
         self.errors = 0                             # sequences pyte's parser raised on
         self.clip: bytes | None = None              # the last complete OSC 52
-        self._osc52: list[str] | None = None        # one still arriving, in pieces
-        self._osc52_len = 0
+        self._osc: list[str] | None = None          # a taken OSC still arriving, in pieces
+        self._osc_cmd = 0                           # its number
+        self._osc_len = 0
 
-    def _take_osc52(self, text: str, i: int) -> int:
-        """Inside an OSC 52 from text[i]; returns where the parser goes on. It has its
-        end there, or takes all of text and is still inside. A copy over OSC52_MAX is
+    def _take_osc(self, text: str, i: int) -> int:
+        """Inside a taken OSC from text[i]; returns where the parser goes on. It has its
+        end there, or takes all of text and is still inside. One over OSC52_MAX is
         dropped whole."""
         n = len(text)
         m = _OSC_END.search(text, i)
@@ -286,17 +308,20 @@ class Stream(pyte.ByteStream):
         if not m and text.endswith("\x1b"):        # maybe half of ESC \: see the next read
             end = n - 1
             self._tail = "\x1b"
-        self._osc52_len += end - i
-        if self._osc52_len > OSC52_MAX:
-            self._osc52.clear()
+        self._osc_len += end - i
+        if self._osc_len > OSC52_MAX:
+            self._osc.clear()
         else:
-            self._osc52.append(text[i:end])
+            self._osc.append(text[i:end])
         if not m:
             return n
-        raw = "".join(self._osc52)
-        if raw:
-            self.clip = raw.encode(errors="replace")
-        self._osc52 = None
+        raw = "".join(self._osc)
+        if self._osc_cmd == 52:
+            if raw:
+                self.clip = raw.encode(errors="replace")
+        elif self._osc_len <= OSC52_MAX and notifies(self._osc_cmd, raw):
+            self.listener.alerts += 1
+        self._osc = None
         return m.end()
 
     def feed(self, data: bytes) -> None:  # type: ignore[override]
@@ -311,8 +336,8 @@ class Stream(pyte.ByteStream):
         send = self._send_to_parser
         plain = self._taking_plain_text
         i, n = 0, len(text)
-        if self._osc52 is not None:
-            i = self._take_osc52(text, 0)
+        if self._osc is not None:
+            i = self._take_osc(text, 0)
         while i < n:
             if plain:
                 m = match_text(text, i)
@@ -327,9 +352,10 @@ class Stream(pyte.ByteStream):
                     i += 1
                     continue
                 if ch == "\x1b":
-                    if text.startswith(_OSC52, i):
-                        self._osc52, self._osc52_len = [], 0
-                        i = self._take_osc52(text, i + len(_OSC52))
+                    m = _OSC_TAKEN.match(text, i)
+                    if m:
+                        self._osc, self._osc_cmd, self._osc_len = [], int(m[1]), 0
+                        i = self._take_osc(text, m.end())
                         continue
                     m = match_csi(text, i)
                     if m:

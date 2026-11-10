@@ -90,6 +90,16 @@ def main() -> None:
                     help="the owner is the Claude Code session this runs under, found by its "
                     "session file: right on every system (in Windows' Git Bash $PPID is not "
                     "claude's pid)")
+    at = sub.add_parser("attn", help="mark a window as wanting you (its tab turns red or green)",
+                        description="Mark a window as wanting you: ask (it can't go on "
+                        "without you; red) or done (it finished and waits; green). Switching "
+                        "to the window clears it; the window you are looking at is never "
+                        "marked. A bell or a notification (OSC 9, 777) from the app marks it "
+                        "ask by itself. With no level and no --clear, print its mark.")
+    at.add_argument("level", nargs="?", choices=("ask", "done"))
+    at.add_argument("--why", help="what it waits for, shown with the mark")
+    at.add_argument("--wid", type=int, help="the window (default: the one this runs in)")
+    at.add_argument("--clear", action="store_true")
     c = sub.add_parser("capture", help="print a window's screen")
     c.add_argument("wid", type=int, nargs="?")
     c.add_argument("--history", action="store_true", help="the scrollback first, then the screen")
@@ -159,6 +169,9 @@ def main() -> None:
                     sys.exit("pys: no Claude Code session above this process "
                              f"(no {claude.home() / 'sessions'}/<pid>.json of an ancestor); "
                              "pass --owner PID")
+        if a.cmd == "attn" and a.clear and a.level:
+            sys.exit("pys: attn takes a level or --clear, not both")
+        if a.cmd in ("title", "attn"):
             if a.wid is None:
                 if (here := nested_in()) is None:
                     sys.exit("pys: not inside a window of this session; pass --wid")
@@ -175,6 +188,10 @@ def main() -> None:
                                  **({"text": None} if a.clear else
                                     {} if a.text is None else {"text": a.text,
                                                                "owner": a.owner})),
+            "attn": lambda: rpc(cmd="attn", wid=a.wid,
+                                **({"level": None} if a.clear else
+                                   {} if a.level is None else {"level": a.level,
+                                                               "why": a.why or ""})),
             "reload": lambda: rpc(cmd="reload"),
             "kill": lambda: rpc(cmd="kill"),
         }[a.cmd]()
@@ -191,5 +208,10 @@ def main() -> None:
         elif a.cmd == "title" and r["agent_title"] and r["title"]:
             print(f"pys: window {r['wid']} has a title set by hand, {r['title']!r}; "
                   "it is shown instead", file=sys.stderr)
+        elif a.cmd == "attn" and a.level is None and not a.clear:
+            print(f"{r['attn']}: {r['attn_why']}" if r["attn"] else "")
+        elif a.cmd == "attn" and a.level and not r["attn"] and r["focused"]:
+            print(f"pys: window {r['wid']} is the one you are looking at; not marked",
+                  file=sys.stderr)
         elif a.cmd in ("ls", "new"):
             print(json.dumps(r))

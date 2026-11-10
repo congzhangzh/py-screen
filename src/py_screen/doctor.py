@@ -137,7 +137,7 @@ def cmd_check() -> int:
         except ImportError:
             r.note("psutil is not installed: the sample's cpu/mem/net/disk widgets show "
                    "nothing (uv tool install 'py-screen[stats]')")
-    from .agents import claude, instructions     # Claude Code's folder, the hook's mark
+    from .agents import attn, claude, instructions   # Claude Code's folder, the hooks' marks
     home = claude.home()
     if home.is_dir():
         missing = [n for n in ("pys-drive", "pys-restore") if not (home / "skills" / n).exists()]
@@ -148,11 +148,17 @@ def cmd_check() -> int:
         try:
             hooks = json.loads((home / "settings.json").read_text(encoding="utf-8"))["hooks"]
             hooked = instructions.MARK in json.dumps(hooks.get("SessionStart", []))
+            marks = [e for e in attn.EVENTS if attn.MARK not in json.dumps(hooks.get(e, []))]
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            hooked = False
+            hooked, marks = False, list(attn.EVENTS)
         if hooked:
             r.ok("a claude in a pys window gets the pys instructions (SessionStart hook)")
         else:
             r.note("no SessionStart hook: a claude in a pys window is not told it is there; `pys setup`")
+        if not marks:
+            r.ok("a claude's window turns red when it asks you, green when its turn ends (hooks)")
+        else:
+            r.note(f"no window-mark hook for {', '.join(marks)}: a claude's tab doesn't show "
+                   "that it waits for you; `pys setup`")
     print(f"{r.errors} error(s)" if r.errors else "no errors; C-a R (or `pys reload`) applies a change")
     return 1 if r.errors else 0

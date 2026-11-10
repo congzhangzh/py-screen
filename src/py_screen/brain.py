@@ -66,6 +66,11 @@ HOOK_TIMEOUT = 60.0              # an ON_CHANGE run after a change is killed aft
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
                                  # full-screen app without mouse
 WIDGET_COLORS = (33, 36, 32, 37)
+# A window that wants you, in the status line and the window list: "ask" (it can't go on
+# without you) white on red, "done" (its turn ended, it waits) black on green.
+ATTN_COLORS = {"ask": "\x1b[0;97;41m", "done": "\x1b[0;30;42m"}
+ATTN_LEVELS = ("ask", "done")
+ATTN_WHY_MAX = 80
 
 UP = (b"\x1b[A", b"\x1bOA", b"k")
 DOWN = (b"\x1b[B", b"\x1bOB", b"j")
@@ -82,7 +87,7 @@ HELP = [
     ("r, then h l j k =", "resize mode (any other key ends it)"),
     ("=", "equalise panes"),
     ("x / X", "close the pane / kill the window"),
-    ("n / p, 0-9", "next / previous window, select by number"),
+    ("n / p / !, 0-9", "next / previous / next that wants you (!); by number"),
     ("Space, prefix twice", "toggle to the last window"),
     ("w  \"  F2", "window list (j k, arrows, digits, Enter, Esc)"),
     (",", "rename the window"),
@@ -168,6 +173,14 @@ class Window:
     copy: Copy | None = None     # copy mode on this window (prefix [)
     info: str | None = None      # the config's CAPTION text for it; None: its folder
     clip: bytes | None = None    # what its app last copied (OSC 52), for the brain to pass on
+    # Its app wants you: "ask" (it can't go on without you: a bell, a notification, a
+    # permission prompt) or "done" (it finished and waits: an agent's turn ended), set by
+    # the app's own bell or by `pys attn`; cleared when the window gets the focus while a
+    # client is attached (you saw it), or by `pys attn --clear`. See Brain.attend.
+    attn: str | None = None
+    attn_why: str = ""
+    attn_at: float = 0.0
+    alert: bool = False          # its app rang since the brain last looked (term.take_alert)
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int,
@@ -190,12 +203,15 @@ class Window:
         replayed = min(self.noack, len(data))
         self.noack -= replayed
         if replayed:                             # a copy in there was made long ago:
-            self.term.feed(data[:replayed])      # replaying it must not copy it again
-            self.term.take_osc52()
+            self.term.feed(data[:replayed])      # replaying it must not copy it again,
+            self.term.take_osc52()               # nor ring again (the state came back
+            self.term.take_alert()               # with load_state)
         self.term.feed(data[replayed:])
         raw = self.term.take_osc52()
         if raw:
             self.clip = term.osc52(raw) or self.clip
+        if self.term.take_alert():
+            self.alert = True
         return len(data) - replayed
 
 
@@ -460,7 +476,44 @@ class Brain:
         if w.clip is not None:
             self.copied(w.clip)
             w.clip = None
+        if w.alert:
+            w.alert = False
+            self.attend(w, "ask", "bell")
         return acked
+
+    # ---- attention: a window whose app waits for you ---------------------------
+    def attend(self, w: Window, level: str | None, why: str = "") -> bool:
+        """Mark w as wanting you (level "ask" or "done"), or clear it (None). The window
+        in front of you is never marked: it is the focused one while a client is attached,
+        so you see it already. Returns whether w is marked now."""
+        if level is not None and w.wid == self.current and self.clients:
+            level = None
+        if (w.attn, w.attn_why) != (level, why if level else ""):
+            w.attn, w.attn_why = level, why if level else ""
+            w.attn_at = time.time() if level else 0.0
+            self.status_dirty = True
+            self.schedule_render()
+            self.save_state()
+        return w.attn is not None
+
+    def saw_focused(self) -> None:
+        """The focused window is in front of a client now: what it wanted, you saw."""
+        w = self.focused_window()
+        if w and w.attn and self.clients:
+            self.attend(w, None)
+
+    def next_attn(self) -> int | None:
+        """The next window after the focused one (in the status line's order) that wants
+        you, "ask" before "done"; None if none does."""
+        if not self.order:
+            return None
+        i = self.order.index(self.current) if self.current in self.order else -1
+        ring = self.order[i + 1:] + self.order[:i + 1]
+        for level in ("ask", "done"):
+            for wid in ring:
+                if self.wins[wid].attn == level:
+                    return wid
+        return None
 
     def parse_all(self, w: Window) -> None:
         """Parse everything w has pending now (a capture wants the exact screen)."""
@@ -513,7 +566,10 @@ class Brain:
             self.set_size(c.cols, c.rows)
 
     def relayout(self) -> None:
-        """Place panes, give each shown window its pane's size, redraw, save."""
+        """Place panes, give each shown window its pane's size, redraw, save. Every
+        change of focus and every attach comes here, so this is where a window's
+        attention mark goes when you get to it."""
+        self.saw_focused()
         self.layout.place(self.cols, self.rows - 1)
         for p in self.layout.panes():
             w = self.wins.get(p.wid) if p.wid is not None else None
@@ -561,6 +617,8 @@ class Brain:
                                   if w.agent_title},
                  "owners": {w.wid: [w.owner, w.owner_start] for w in self.wins.values()
                             if w.owner is not None},
+                 "attn": {w.wid: [w.attn, w.attn_why, w.attn_at] for w in self.wins.values()
+                          if w.attn},
                  "order": self.order}
         if self.widgets_shown is not None:
             state["widgets_shown"] = self.widgets_shown
@@ -609,6 +667,11 @@ class Brain:
         for k, (pid, start) in state.get("owners", {}).items():
             if int(k) in self.wins:                # owner_loop drops it if it's gone
                 self.wins[int(k)].owner, self.wins[int(k)].owner_start = pid, start
+        for k, v in state.get("attn", {}).items():
+            if int(k) in self.wins and isinstance(v, list) and len(v) == 3 \
+                    and v[0] in ATTN_LEVELS:
+                w = self.wins[int(k)]
+                w.attn, w.attn_why, w.attn_at = v[0], str(v[1]), float(v[2])
         if isinstance(state.get("widgets_shown"), bool):
             self.widgets_shown = state["widgets_shown"]
         order = [w for w in state.get("order", []) if w in self.wins]
@@ -706,7 +769,9 @@ class Brain:
         left, left_w = "\x1b[0;30;46m pys \x1b[0m", 5
         used = 0
         for wid, label, x in self.status_tabs(right_w, cols):
-            left += (f"\x1b[0;30;43m{label}\x1b[0m" if wid == self.current else label)
+            color = ("\x1b[0;30;43m" if wid == self.current else
+                     ATTN_COLORS.get(self.wins[wid].attn, ""))
+            left += f"{color}{label}\x1b[0m" if color else label
             used = x + width(label) - left_w
         gap = " " * max(0, cols - left_w - used - right_w)
         return row + left + gap + "".join(right_parts) + "\x1b[0m"
@@ -740,15 +805,29 @@ class Brain:
         return right_parts, right_w
 
     def status_tabs(self, right_w: int, cols: int | None = None) -> list[tuple[int, str, int]]:
-        """The window labels that fit in the status line: (wid, label, start column)."""
+        """The window labels that fit in the status line: (wid, label, start column).
+        They go in order, whole, until one doesn't fit. A window that wants you (attn)
+        is never left out for that: room for a short label (" 7! ") is kept for each one
+        further on, so it shows short where its whole label doesn't fit."""
         cols = self.cols if cols is None else cols
         x, budget, out = 5, max(0, cols - 5 - right_w), []
+        short = {wid: f" {wid}! " for wid in self.order if self.wins[wid].attn}
+        keep = sum(width(t) for t in short.values())      # room kept for those further on
+        full = True                                       # whole labels still fit
         for wid in self.order:
             w = self.wins[wid]
-            flag = "*" if wid == self.current else ("-" if wid == self.last else "")
+            if wid in short:
+                keep -= width(short[wid])
+            flag = ("*" if wid == self.current else "!" if w.attn else
+                    "-" if wid == self.last else "")
             label = f" {wid}{flag} {w.name} "
-            if x - 5 + width(label) > budget:
-                break
+            if full and x - 5 + width(label) + keep <= budget:
+                pass
+            elif wid in short and x - 5 + width(short[wid]) + keep <= budget:
+                full, label = False, short[wid]
+            else:
+                full = False
+                continue
             out.append((wid, label, x))
             x += width(label)
         return out
@@ -758,10 +837,14 @@ class Brain:
         rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
             w = self.wins[wid]
-            rows.append((i, fit(f" {wid:>3}  {fit(w.name, 24)} {cfgmod.home_path(w.cwd())}", c.cols)))
+            mark = "!" if w.attn else " "
+            rows.append((i, fit(f" {wid:>3}{mark} {fit(w.name, 24)} {cfgmod.home_path(w.cwd())}",
+                                c.cols)))
         out = [f"\x1b[1;1H\x1b[0;30;46m{rows[0]}\x1b[0m"]
         for y, (i, text) in enumerate(rows[1:area], start=1):
-            attr = "\x1b[0;30;43m" if i == c.list_idx else "\x1b[0m"
+            attn = self.wins[self.order[i]].attn
+            attr = ("\x1b[0;30;43m" if i == c.list_idx else
+                    ATTN_COLORS.get(attn, "\x1b[0m") if attn else "\x1b[0m")
             out.append(f"\x1b[{y + 1};1H{attr}{text}\x1b[0m")
         for y in range(len(rows), area):
             out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * c.cols}")
@@ -772,7 +855,8 @@ class Brain:
         wins = [" windows (a digit or a click selects one)"]
         for wid in self.order:
             w = self.wins[wid]
-            flag = "*" if wid == self.current else ("-" if wid == self.last else " ")
+            flag = ("*" if wid == self.current else "!" if w.attn else
+                    "-" if wid == self.last else " ")
             wins.append(f"   {wid:>2}{flag} {fit(w.name, 20)} {cfgmod.home_path(w.cwd())}")
         pfx = "C-" + chr(c.prefix + 0x60) if c.prefix < 0x1B else "C-" + chr(c.prefix + 0x40)
         out = [wins, [f" keys: prefix {pfx}, then"] + [f"   {k:<23} {v}" for k, v in HELP]]
@@ -1349,6 +1433,9 @@ class Brain:
             self.schedule_render()
         elif key == "n":
             self.step(1)
+        elif key == "!":
+            if (wid := self.next_attn()) is not None:
+                self.select(wid)
         elif key == "p":
             self.step(-1)
         elif key.isdigit():
@@ -1520,7 +1607,9 @@ class Brain:
                                  "cmd": w.cmd, "cwd": w.cwd(),
                                  "pending": len(w.pending), "alt": w.term.in_alt,
                                  "mouse": mouse.level(w.term.mode), "scroll": w.scroll,
-                                 "history": w.term.history, "copy": w.copy is not None}
+                                 "history": w.term.history, "copy": w.copy is not None,
+                                 "attn": w.attn, "attn_why": w.attn_why or None,
+                                 "attn_at": w.attn_at or None}
                                 for w in (self.wins[i] for i in self.order)],
                     "panes": [{"wid": p.wid, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
                                "focus": p is self.layout.focus} for p in self.layout.panes()]}
@@ -1541,6 +1630,19 @@ class Brain:
                 self.set_agent_title(w, text or None, owner, start)
             return {"ok": True, "wid": w.wid, "agent_title": w.agent_title,
                     "agent_owner": w.owner, "title": w.title, "name": w.name}
+        if cmd == "attn":
+            w = self.wins.get(m.get("wid"))
+            if w is None:
+                return {"ok": False, "error": f"no window {m.get('wid')}"}
+            if "level" in m:                      # absent: only read it; None: clear it
+                level = m["level"]
+                if level is not None and level not in ATTN_LEVELS:
+                    return {"ok": False, "error": f"level {level!r}: one of {ATTN_LEVELS}"}
+                why = " ".join(str(m.get("why") or "").split())
+                why = "".join(ch for ch in why if ch.isprintable())[:ATTN_WHY_MAX]
+                self.attend(w, level, why or level or "")
+            return {"ok": True, "wid": w.wid, "attn": w.attn, "attn_why": w.attn_why or None,
+                    "focused": w.wid == self.current and bool(self.clients)}
         if cmd == "capture":
             w = self.wins[m.get("wid", self.current)]
             self.parse_all(w)

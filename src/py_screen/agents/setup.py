@@ -6,8 +6,11 @@ tool or the bundle. A dry run by default (what it would do); --yes does it.
      own, config.d/50-pys-setup.py, and only when your config has no ON_CHANGE yet. Your
      config.py is never edited
   2. the agent skills (pys-drive, pys-restore) linked into Claude Code's skills folder
-  3. a SessionStart hook in Claude Code's settings.json (a copy of it first): every session
-     that starts in a pys window gets a few lines on how to behave there (instructions.py)
+  3. hooks in Claude Code's settings.json (a copy of it first): SessionStart, so every
+     session that starts in a pys window gets a few lines on how to behave there
+     (instructions.py); Notification, Stop, UserPromptSubmit and SessionEnd, so its window's
+     tab turns red when it asks you, green when its turn ended, and back when you answer
+     (attn.py)
 
 Each step is skipped when it is done already, so running it again is safe. Claude Code's
 folder is $CLAUDE_CONFIG_DIR, else ~/.claude. After a pip/uv upgrade nothing needs redoing;
@@ -22,7 +25,7 @@ import time
 from pathlib import Path
 
 from .. import config, doctor, utf8_pipes
-from . import claude, instructions, listing
+from . import attn, claude, instructions, listing
 
 DROP_IN = "50-pys-setup.py"
 ON_CHANGE_LINES = ('# written by `pys setup` (config.d runs after config.py, by name): a snapshot\n'
@@ -69,26 +72,43 @@ def step_skills(do: bool) -> str:
     return f"skills: done (above) in {dest}"
 
 
+def hook_command(module: str) -> str:
+    """What settings.json runs: this install's Python, whatever is on PATH."""
+    return instructions.hook_command().replace(instructions.MARK, module)
+
+
+# (event, the module that runs, what it is for): each module is its own mark
+HOOKS = [("SessionStart", instructions.MARK, "instructions")] + \
+        [(e, attn.MARK, "window marks") for e in attn.EVENTS]
+
+
 def step_hook(do: bool) -> str:
     p = claude.home() / "settings.json"
-    want = instructions.hook_command()
     try:
         s = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
     except ValueError as e:
         return f"hook: ⚠ {p} is not valid JSON ({e}); left as it is, fix it and run again"
-    groups = s.setdefault("hooks", {}).setdefault("SessionStart", [])
-    ours = [(g, h) for g in groups for h in g.get("hooks", [])
-            if instructions.MARK in str(h.get("command", ""))]
-    if any(h.get("command") == want for _, h in ours):
-        return f"hook: SessionStart in {p} runs this install already"
-    what = "point the SessionStart hook at this install" if ours else "add a SessionStart hook"
+    todo = []                            # (event, the groups, ours there, the command)
+    for event, mark, _ in HOOKS:
+        want = hook_command(mark)
+        groups = s.setdefault("hooks", {}).setdefault(event, [])
+        ours = [(g, h) for g in groups for h in g.get("hooks", [])
+                if mark in str(h.get("command", ""))]
+        if not any(h.get("command") == want for _, h in ours):
+            todo.append((event, groups, ours, want))
+    if not todo:
+        return f"hook: every hook in {p} runs this install already"
+    what = "; ".join(f"point the {event} hook at this install" if ours else f"add a {event} hook"
+                     for event, _, ours, _ in todo)
     if not do:
-        return f"hook: {what} in {p}: {want}"
+        return f"hook: {what} in {p}: {todo[0][3]}" + (" (and the others)" if len(todo) > 1
+                                                          else "")
     kept = f" (a copy kept as {keep_copy(p).name})" if p.is_file() else ""
-    for g, h in ours:                    # another install's: this one replaces it
-        g["hooks"].remove(h)
-    s["hooks"]["SessionStart"] = [g for g in groups if g.get("hooks")] + \
-        [{"hooks": [{"type": "command", "command": want}]}]
+    for event, groups, ours, want in todo:
+        for g, h in ours:                # another install's: this one replaces it
+            g["hooks"].remove(h)
+        s["hooks"][event] = [g for g in groups if g.get("hooks")] + \
+            [{"hooks": [{"type": "command", "command": want}]}]
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(s, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return f"hook: {what} in {p}{kept}"

@@ -71,6 +71,8 @@ pys capture 0       # the window's screen as text
 pys title 'release · kit · #12 libfuse'   # name the window this runs in ($PYS_WINDOW)
 pys title --wid 3 --clear                 # or another one; no text: print it
 pys title --owner $PPID 'review · pys'    # dropped when that process ends
+pys attn ask --why 'needs a password'     # mark this window: it wants you (red tab)
+pys attn done --wid 3                     # its work is done, it waits (green); --clear
 pys reload          # new brain, same shells
 pys kill            # end everything
 ```
@@ -90,6 +92,18 @@ process's start time too, so a reused PID doesn't count). In Claude Code's Bash 
 it stays until cleared or the window closes. The owner is a PID as the brain sees it, so
 it means nothing from inside a PID namespace (a sandbox with its own PIDs).
 
+**A window that wants you** gets a mark on its tab, so you see it from any other window:
+`7!` on red, **ask**: it can't go on without you (a permission prompt, a question); `7!` on
+green, **done**: it finished and waits. Its app marks it ask by itself with a bell (BEL)
+or a notification (OSC 9, as iTerm2 takes it; OSC 777;notify, as urxvt, VTE and Ghostty
+do; OSC 9 followed by a number is ConEmu's progress bar or folder, so it isn't one); a
+program or a hook marks it with `pys attn`. Switching to the window clears the mark (you
+saw it), and the window in front of you is never marked. Prefix `!` goes to the next
+marked window, ask ones first. A marked window whose whole tab doesn't fit on the status
+line still shows, as a short `7!`; the window list marks it too. `pys ls --json` gives
+`attn`, `attn_why` and `attn_at` per window. For Claude Code, `pys setup` adds the hooks
+that do it (below).
+
 Keys: the prefix is **`C-a`**, or **`C-]`** when you run `pys` inside GNU screen (`$STY`
 set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFIX`.
 
@@ -102,6 +116,7 @@ set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFI
 | `r` then `h/l/j/k`, `=` | resize mode (any other key ends it) · `=` equalise panes |
 | `x` / `X` | close the pane (window keeps running) / kill the window |
 | `n` `p` `0`–`9`, `Alt-0`–`Alt-9` | next, previous, select |
+| `!` | the next window that wants you (red first, then green) |
 | `Space` or the prefix twice | toggle to the last window |
 | `w` `"` `F2` | window list (`j/k`, arrows, digits, Enter, Esc) |
 | `,` | rename the window |
@@ -303,6 +318,11 @@ pys setup --yes    # do it; running it again is safe
    to name it, how to look before it types, never to `pys kill`, and how to run pys from this
    install; outside pys it says nothing. `python -m py_screen.agents.instructions --show`
    prints the text. A skill is read when a task calls for it; these lines are always there.
+4. hooks for `Notification`, `Stop`, `UserPromptSubmit` and `SessionEnd`
+   (`python -m py_screen.agents.attn`): a claude's tab turns red when it asks you (a
+   permission prompt), green when its turn ends, and back when you answer. Claude's idle
+   reminder is left out: the turn's end marked it already, and once you looked it stays
+   seen. Outside pys, or with no server, the hook does nothing and never holds Claude up.
 
 ![Two agents in pys windows; pys-agents lists them; pys kill ends everything; pys-sessions restore opens both again, each with its session and folder](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-agents.v3.gif)
 

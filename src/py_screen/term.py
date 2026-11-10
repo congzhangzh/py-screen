@@ -18,6 +18,10 @@ PYS_TERM=pyte or PYS_TERM=vterm picks one; otherwise the fastest one available.
 Both engines also keep the last OSC 52 an app wrote, the sequence that sets the clipboard.
 A pane's terminal is pys, so it is up to pys to pass that on: take_osc52() returns what
 followed "52;" as the app wrote it (selections ; base64), osc52() decodes it.
+
+And both count the times the app asked for attention: a bell (BEL, not the one that ends
+an OSC) or a notification (OSC 9, OSC 777;notify; screen.notifies says which). take_alert()
+says whether any came since it was last called; the brain marks the window with it.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ class Term(Protocol):
     def row(self, y: int, width: int) -> str: ...
     def mode(self, n: int) -> bool: ...
     def take_osc52(self) -> bytes | None: ...
+    def take_alert(self) -> bool: ...
     @property
     def display(self) -> list[str]: ...
 
@@ -154,6 +159,10 @@ class PyteTerm:
     def take_osc52(self) -> bytes | None:
         clip, self.stream.clip = self.stream.clip, None
         return clip
+
+    def take_alert(self) -> bool:
+        n, self.screen.alerts = self.screen.alerts, 0
+        return n > 0
 
     @property
     def title(self) -> str:

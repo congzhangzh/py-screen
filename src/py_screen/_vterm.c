@@ -94,6 +94,11 @@ typedef struct {
     char *osc52_next;         /* fragments of one still arriving */
     size_t osc52_len, osc52_cap;
     int osc52_big;            /* it passed OSC52_MAX: dropped whole when it ends */
+    /* Bells and notifications (OSC 9, 777) since take_alert; for a notification still
+     * arriving, the start of what follows its number (all notifies() needs) and its length. */
+    long alerts;
+    char osc_head[16];
+    size_t osc_head_len, osc_len;
 } TermObject;
 
 /* ---- shared helpers ------------------------------------------------------------- */
@@ -154,9 +159,36 @@ static void take_title(TermObject *t, VTermStringFragment f)
 /* A copy past this is dropped; screen.OSC52_MAX says why this number. */
 #define OSC52_MAX (1 << 20)
 
+/* An OSC 9 or 777 that asks for attention; screen.notifies has the same rule and says why.
+ * head: the first head_len bytes of the payload, len: all of it. */
+static int notifies(int command, const char *head, size_t head_len, size_t len)
+{
+    if (command == 9) {
+        size_t d = 0;
+        while (d < head_len && head[d] >= '0' && head[d] <= '9')
+            d++;
+        int conemu = d > 0 && ((d < head_len && head[d] == ';') || (d == head_len && d == len));
+        return len > 0 && !conemu;
+    }
+    return command == 777 && head_len >= 6 && memcmp(head, "notify", 6) == 0
+           && (len == 6 || (head_len > 6 && head[6] == ';'));
+}
+
 static int fb_osc(int command, VTermStringFragment f, void *user)
 {
     TermObject *t = user;
+    if (command == 9 || command == 777) {
+        if (f.initial)
+            t->osc_head_len = t->osc_len = 0;
+        size_t room = sizeof t->osc_head - t->osc_head_len;
+        size_t n = f.len < room ? f.len : room;
+        memcpy(t->osc_head + t->osc_head_len, f.str, n);
+        t->osc_head_len += n;
+        t->osc_len += f.len;
+        if (f.final && notifies(command, t->osc_head, t->osc_head_len, t->osc_len))
+            t->alerts++;
+        return 1;
+    }
     if (command != 52)
         return 0;
     if (f.initial) {
@@ -583,8 +615,15 @@ static int st_sb_clear(void *user)
     return 0;
 }
 
+static int st_bell(void *user)
+{
+    ((TermObject *)user)->alerts++;
+    return 1;
+}
+
 static const VTermStateCallbacks state_cbs = {
     .putglyph = st_putglyph,
+    .bell = st_bell,
     .scrollrect = st_scrollrect,
     .moverect = st_moverect,
     .erase = st_erase,
@@ -1085,6 +1124,13 @@ static PyObject *Term_take_osc52(TermObject *self, PyObject *noargs)
     Py_RETURN_NONE;
 }
 
+static PyObject *Term_take_alert(TermObject *self, PyObject *noargs)
+{
+    long n = self->alerts;
+    self->alerts = 0;
+    return PyBool_FromLong(n > 0);
+}
+
 static PyObject *Term_get_pushed(TermObject *self, void *closure)
 {
     return PyLong_FromLongLong(self->pushed);
@@ -1101,6 +1147,8 @@ static PyMethodDef Term_methods[] = {
     {"mode", (PyCFunction)Term_mode, METH_O, "mode(n): private mode n (DECSET n) is on."},
     {"take_osc52", (PyCFunction)Term_take_osc52, METH_NOARGS,
      "What followed \"52;\" in the last OSC 52 since the last call, or None; clears it."},
+    {"take_alert", (PyCFunction)Term_take_alert, METH_NOARGS,
+     "A bell or a notification (OSC 9, 777) came since the last call; clears it."},
     {NULL}
 };
 
