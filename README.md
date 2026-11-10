@@ -472,10 +472,10 @@ uv tool install py-screen          # the command is pys
 ```
 
 The import is `py_screen` and the command `pys`. Until 20261109.2 the package was
-`py-screen-mux` (an older `pyscreen` held the name); that name still installs, each release,
-the same version of `py-screen`, so `uv tool upgrade py-screen-mux` keeps working. To move
-to the new name: `uv tool uninstall py-screen-mux && uv tool install py-screen`, then
-`pys setup --yes` (it points the skills and the hook at the new install).
+`py-screen-mux` (an older `pyscreen` held the name); that name gets no more releases, so
+`uv tool upgrade py-screen-mux` stays at 20261109.2. To move to the new name:
+`uv tool uninstall py-screen-mux && uv tool install py-screen`, then `pys setup --yes` (it
+points the skills and the hook at the new install).
 
 Or take the **ready-to-use bundle** for your system from the
 [release](https://github.com/congzhangzh/py-screen/releases): `pys-<version>-<os>-<arch>.tar.gz`

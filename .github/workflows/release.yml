@@ -1,8 +1,7 @@
 name: release
 
 # A tag is a release, and nothing else is: pushing the tag <YYYYMMDD>.<N>, on a commit of
-# main, publishes that version on PyPI, as py-screen (and py-screen-mux, its old name, as a shim
-# that installs it), and on GitHub. Every push and pull
+# main, publishes that version on PyPI, as py-screen, and on GitHub. Every push and pull
 # request is tested by ci.yml, and publishes nothing. So:
 #   git tag 20261106.1 <sha> && git push origin 20261106.1
 # By hand, a dry run of any commit, on any branch, with nothing published (version <day>.0):
@@ -199,17 +198,6 @@ jobs:
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: Smoke test on the vterm engine
         run: PYS_TERM=vterm uv run --no-project --python 3.14 python release/smoke.py
-      - name: py-screen-mux, the old name, installs this py-screen and gives its commands
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          VERSION: ${{ needs.sdist.outputs.version }}
-        run: |
-          uv run --no-project --python 3.14 python release/mux_shim.py --version "$VERSION" --out shim
-          uv venv -q --python 3.14 shimcheck
-          uv pip install -q --python shimcheck/bin/python --find-links dist --find-links shim \
-            "py-screen-mux==$VERSION"
-          shimcheck/bin/pys sample-config | grep -q "sample pys config"
-          shimcheck/bin/pys-agents skills | grep -q pys-drive
       - name: The agent tools as installed (a stand-in claude, typed into through pys send)
         env:
           VERSION: ${{ needs.sdist.outputs.version }}
@@ -396,26 +384,9 @@ jobs:
           path: dist
           merge-multiple: true
       - run: ls -l dist
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.sdist.outputs.sha }}
-          sparse-checkout: release
-          path: src
-      - uses: astral-sh/setup-uv@v6
-      - name: py-screen-mux, the old name, as a shim that installs this py-screen
-        env:
-          VERSION: ${{ needs.sdist.outputs.version }}
-        run: |
-          # smoke (ubuntu) checked that it gives a working pys from this release's wheel
-          uv run --no-project --python 3.14 python src/release/mux_shim.py --version "$VERSION" --out shim
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # a rerun after a failure past this point finds its files already there
-          skip-existing: true
-      - name: Publish the shim (after py-screen, which it requires)
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: shim
           skip-existing: true
 
   release:

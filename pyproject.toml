@@ -1,7 +1,7 @@
 [project]
 # On PyPI as py-screen (until 20261109.2 as py-screen-mux, while "pyscreen" held the name;
-# py-screen-mux now installs py-screen: release/mux-shim). The import is py_screen and the
-# command pys. The version is set by release.yml: <YYYYMMDD>.<N>.
+# py-screen-mux gets no more releases). The import is py_screen and the command pys. The
+# version is set by release.yml: <YYYYMMDD>.<N>.
 name = "py-screen"
 version = "0.1.0"
 description = "py-screen: a terminal workspace (multiplexer) of my own, with the pys command"
