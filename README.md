@@ -17,6 +17,7 @@ made more powerful and improved by daily use. The design is in [`spec/`](https:/
 current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
 
 ```bash
+uvx py-screen                     # try it: no install (the command is py-screen or pys)
 uv tool install py-screen         # the command is pys; uv fetches Python 3.14 if needed
 pys                               # attach, starting the server on first use
 ```

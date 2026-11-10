@@ -128,3 +128,11 @@ def test_config_d_adds_to_config_py_and_a_broken_file_is_left_out(tmp_path: Path
     doc = subprocess.run([*PY, "py_screen", "doctor"], env=e, capture_output=True, text=True,
                          encoding="utf-8", timeout=60)
     assert "+ 10-mine.py" in doc.stdout and "20-broken.py does not run (line 3)" in doc.stdout
+
+
+def test_the_command_is_also_named_like_the_package() -> None:
+    """`uvx py-screen` runs the command named like the package: py-screen is pys."""
+    from importlib.metadata import entry_points
+    eps = {e.name: e.value for e in entry_points(group="console_scripts")
+           if e.value.startswith("py_screen")}
+    assert eps.get("py-screen") == eps.get("pys") == "py_screen:main"

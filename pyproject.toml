@@ -42,6 +42,7 @@ Issues = "https://github.com/congzhangzh/py-screen/issues"
 
 [project.scripts]
 pys = "py_screen:main"
+py-screen = "py_screen:main"                         # the same, by the package's name: `uvx py-screen` runs it
 pys-agents = "py_screen.agents.listing:main"      # which window runs which Claude Code session
 pys-sessions = "py_screen.agents.sessions:main"  # save the windows, restore them after pys died
 

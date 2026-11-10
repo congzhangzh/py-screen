@@ -44,7 +44,7 @@ here=$(cd "$(dirname "$self")/.." && pwd)
 exec "$here/python/bin/python3" -m MODULE "$@"
 """
 # bin/<name> (<name>.exe on Windows) → the module it runs; every system gets all three
-LAUNCHERS = {"pys": "py_screen", "pys-agents": "py_screen.agents.listing",
+LAUNCHERS = {"pys": "py_screen", "py-screen": "py_screen", "pys-agents": "py_screen.agents.listing",
              "pys-sessions": "py_screen.agents.sessions"}
 
 # Windows: the launcher pip itself writes entry points with (distlib's), its shebang naming
