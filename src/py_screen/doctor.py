@@ -136,7 +136,7 @@ def cmd_check() -> int:
             import psutil  # noqa: F401
         except ImportError:
             r.note("psutil is not installed: the sample's cpu/mem/net/disk widgets show "
-                   "nothing (uv tool install 'py-screen-mux[stats]')")
+                   "nothing (uv tool install 'py-screen[stats]')")
     from .agents import claude, instructions     # Claude Code's folder, the hook's mark
     home = claude.home()
     if home.is_dir():

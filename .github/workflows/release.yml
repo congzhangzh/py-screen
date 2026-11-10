@@ -1,7 +1,8 @@
 name: release
 
 # A tag is a release, and nothing else is: pushing the tag <YYYYMMDD>.<N>, on a commit of
-# main, publishes that version on PyPI, as py-screen-mux, and on GitHub. Every push and pull
+# main, publishes that version on PyPI, as py-screen (and py-screen-mux, its old name, as a shim
+# that installs it), and on GitHub. Every push and pull
 # request is tested by ci.yml, and publishes nothing. So:
 #   git tag 20261106.1 <sha> && git push origin 20261106.1
 # By hand, a dry run of any commit, on any branch, with nothing published (version <day>.0):
@@ -194,7 +195,7 @@ jobs:
           VERSION: ${{ needs.sdist.outputs.version }}
         run: |
           # uv picks the wheel built for this OS and architecture among all of them
-          uv tool install --python 3.14 --find-links dist "py-screen-mux==$VERSION"
+          uv tool install --python 3.14 --find-links dist "py-screen==$VERSION"
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: Smoke test on the vterm engine
         run: PYS_TERM=vterm uv run --no-project --python 3.14 python release/smoke.py
@@ -203,7 +204,7 @@ jobs:
           VERSION: ${{ needs.sdist.outputs.version }}
         run: |
           PYS_SMOKE_BIN="$(uv tool dir --bin)" uv run --no-project --python 3.14 --find-links dist \
-            --with pytest --with "py-screen-mux==$VERSION" pytest -q -p no:cacheprovider tests/test_agents_smoke.py
+            --with pytest --with "py-screen==$VERSION" pytest -q -p no:cacheprovider tests/test_agents_smoke.py
 
   bundle:
     needs: [sdist, wheels]
@@ -260,7 +261,7 @@ jobs:
           # the agent tools through the bundle's own launchers (Windows: the .exe beside pys.exe)
           bin="$b/bin"; [ "$RUNNER_OS" = Windows ] && bin=$(cygpath -w "$b")
           PYS_SMOKE_BIN="$bin" uv run --no-project --python 3.14 --find-links dist \
-            --with pytest --with "py-screen-mux==${{ needs.sdist.outputs.version }}" \
+            --with pytest --with "py-screen==${{ needs.sdist.outputs.version }}" \
             pytest -q -p no:cacheprovider tests/test_agents_smoke.py
       - uses: actions/upload-artifact@v4
         with:
@@ -311,9 +312,9 @@ jobs:
             echo
             echo "**Install** (needs [uv](https://docs.astral.sh/uv/); it fetches Python 3.14 if missing; the command is \`pys\`):"
             echo '```'
-            echo "uv tool install py-screen-mux==$VERSION"
+            echo "uv tool install py-screen==$VERSION"
             echo '```'
-            echo "from [PyPI](https://pypi.org/project/py-screen-mux/$VERSION/), which picks the wheel for your system, or one of these files:"
+            echo "from [PyPI](https://pypi.org/project/py-screen/$VERSION/), which picks the wheel for your system, or one of these files:"
             echo
             echo "| System | Install |"
             echo "|---|---|"
@@ -369,7 +370,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/py-screen-mux/${{ needs.sdist.outputs.version }}/
+      url: https://pypi.org/project/py-screen/${{ needs.sdist.outputs.version }}/
     permissions:
       id-token: write # Trusted Publishing: no token is stored anywhere
     steps:
@@ -384,9 +385,31 @@ jobs:
           path: dist
           merge-multiple: true
       - run: ls -l dist
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sdist.outputs.sha }}
+          sparse-checkout: release
+          path: src
+      - uses: astral-sh/setup-uv@v6
+      - name: py-screen-mux, the old name, as a shim that installs this py-screen
+        env:
+          VERSION: ${{ needs.sdist.outputs.version }}
+        run: |
+          uv run --no-project --python 3.14 python src/release/mux_shim.py --version "$VERSION" --out shim
+          # it must give a working pys from this release's own wheel, before it is published
+          uv venv -q --python 3.14 shimcheck
+          uv pip install -q --python shimcheck/bin/python --find-links dist --find-links shim \
+            "py-screen-mux==$VERSION"
+          shimcheck/bin/pys sample-config | grep -q "sample pys config"
+          shimcheck/bin/pys-agents skills | grep -q pys-drive
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # a rerun after a failure past this point finds its files already there
+          skip-existing: true
+      - name: Publish the shim (after py-screen, which it requires)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: shim
           skip-existing: true
 
   release:

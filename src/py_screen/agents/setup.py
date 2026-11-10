@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"pys setup, from {Path(sys.executable).parent}" + ("" if do else " (a dry run)"))
     if from_uv_cache():
         print("  ⚠ this pys runs from uv's cache (uvx): the skills and the hook would point "
-              "into it,\n    and `uv cache clean` empties it. `uv tool install py-screen-mux`, "
+              "into it,\n    and `uv cache clean` empties it. `uv tool install py-screen`, "
               "then `pys setup`, lasts.")
     for step in (step_config, step_skills, step_hook):
         print("  " + step(do))

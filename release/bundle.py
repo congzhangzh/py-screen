@@ -6,7 +6,7 @@ Usage: release/bundle.py --wheels DIR --version V [--out DIR]
 
   1. A standalone CPython 3.14 (python-build-standalone, the build uv itself installs:
      relocatable, so the folder works wherever it is unpacked).
-  2. py-screen-mux[stats]==V from the wheel in --wheels (the release's own wheel for this
+  2. py-screen[stats]==V from the wheel in --wheels (the release's own wheel for this
      OS and architecture), with pyte, psutil (and pywinpty on Windows) from PyPI,
      byte-compiled so the first start doesn't write into the folder.
   3. A launcher that runs `python -m py_screen` from wherever the folder is. pip's own
@@ -83,7 +83,7 @@ own config's widgets, install it into this Python:
 
     {pip} install <package>
 
-Licences: py-screen and libvterm (MIT) in python/{site}/py_screen_mux-{version}.dist-info/;
+Licences: py-screen and libvterm (MIT) in python/{site}/py_screen-{version}.dist-info/;
 Python's own in python/{pylicense}. Source: https://github.com/congzhangzh/py-screen
 """
 
@@ -174,7 +174,7 @@ def main() -> None:
                 shutil.rmtree(p)
 
         run("uv", "pip", "install", "--python", py, "--find-links", a.wheels,
-            "--compile-bytecode", f"py-screen-mux[stats]=={a.version}")
+            "--compile-bytecode", f"py-screen[stats]=={a.version}")
         # pip's console scripts (python/bin/pys, python/Scripts/pys.exe) hold this temp
         # folder's absolute path: drop them, the launcher below is the way in
         for script in [*(py_dir / "bin" / n for n in LAUNCHERS), py_dir / "Scripts"]:
@@ -184,9 +184,9 @@ def main() -> None:
                 script.unlink()
         # the wheel must be the release's own, never a same-numbered one from an index
         shown = run(py, "-c", "import py_screen, importlib.metadata as m;"
-                    "print(m.version('py-screen-mux'))").strip()
+                    "print(m.version('py-screen'))").strip()
         if shown != a.version:
-            sys.exit(f"bundle: installed py-screen-mux {shown}, wanted {a.version}")
+            sys.exit(f"bundle: installed py-screen {shown}, wanted {a.version}")
 
         if WIN:
             for n, module in LAUNCHERS.items():

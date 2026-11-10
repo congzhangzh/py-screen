@@ -11,7 +11,7 @@ work=${PYS_DEMO_WORK:-$HOME/scratch/pys-demo-agents}
 mkdir -p "$work/ctx" "$work/out"
 chmod a+rwx "$work/out"     # the image's user `demo` has a uid of its own
 uv build --sdist -o "$work/sdist" >/dev/null
-cp "$(ls -t "$work"/sdist/*.tar.gz | head -1)" "$work/ctx/py_screen_mux.tar.gz"
+cp "$(ls -t "$work"/sdist/*.tar.gz | head -1)" "$work/ctx/py_screen.tar.gz"
 cp docs/demo-agents/Dockerfile docs/demo-agents/claude "$work/ctx/"
 docker build -q -t pys-demo-agents "$work/ctx"
 docker run --rm --init --hostname demo -w /out -v "$PWD/docs/demo-agents.tape:/tape/demo.tape:ro" \

@@ -1,8 +1,8 @@
 [project]
-# On PyPI as py-screen-mux: "py-screen" is refused there as too close to the existing
-# "pyscreen" (PyPI compares names without - _ .), and "pys" is taken. The import stays
-# py_screen and the command pys. The version is set by release.yml: <YYYYMMDD>.<N>.
-name = "py-screen-mux"
+# On PyPI as py-screen (until 20261109.2 as py-screen-mux, while "pyscreen" held the name;
+# py-screen-mux now installs py-screen: release/mux-shim). The import is py_screen and the
+# command pys. The version is set by release.yml: <YYYYMMDD>.<N>.
+name = "py-screen"
 version = "0.1.0"
 description = "py-screen: a terminal workspace (multiplexer) of my own, with the pys command"
 readme = "README.md"
@@ -31,7 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # psutil, which macOS and Windows get anyway (above), for Linux too: nothing there needs it
-# (Linux reads /proc), the name stays so that `py-screen-mux[stats]` keeps installing.
+# (Linux reads /proc), the name stays so that `py-screen[stats]` keeps installing.
 stats = ["psutil>=7"]
 
 [project.urls]

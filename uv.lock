@@ -61,7 +61,7 @@ wheels = [
 ]
 
 [[package]]
-name = "py-screen-mux"
+name = "py-screen"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -9,8 +9,8 @@ RUN useradd -m -s /bin/bash demo
 USER demo
 WORKDIR /home/demo
 ENV PATH=/home/demo/.local/bin:$PATH UV_PYTHON_PREFERENCE=only-managed SHELL=/bin/bash
-COPY --chown=demo py_screen_mux.tar.gz /tmp/sdist/
-RUN uv tool install --python 3.14 /tmp/sdist/py_screen_mux.tar.gz && pys --help >/dev/null
+COPY --chown=demo py_screen.tar.gz /tmp/sdist/
+RUN uv tool install --python 3.14 /tmp/sdist/py_screen.tar.gz && pys --help >/dev/null
 COPY --chown=demo claude /home/demo/.local/bin/claude
 RUN mkdir -p src/app src/api .config/pys \
     && printf 'ON_CHANGE = ["pys-sessions", "save", "--quiet"]\n' > .config/pys/config.py \

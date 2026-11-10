@@ -17,7 +17,7 @@ made more powerful and improved by daily use. The design is in [`spec/`](https:/
 current version is [`spec/spec.v3.md`](https://github.com/congzhangzh/py-screen/blob/main/spec/spec.v3.md).
 
 ```bash
-uv tool install py-screen-mux     # the command is pys; uv fetches Python 3.14 if needed
+uv tool install py-screen         # the command is pys; uv fetches Python 3.14 if needed
 pys                               # attach, starting the server on first use
 ```
 
@@ -439,7 +439,7 @@ unknown erase value) is ignored, as terminals do; the bytes after it are still p
 ## Releases
 
 A tag is a release. Pushing a tag `<YYYYMMDD>.<N>` on a commit of `main` publishes that
-version on [PyPI as `py-screen-mux`](https://pypi.org/project/py-screen-mux/) and as a
+version on [PyPI as `py-screen`](https://pypi.org/project/py-screen/) and as a
 [GitHub release](https://github.com/congzhangzh/py-screen/releases), once, never replaced:
 
 ```bash
@@ -468,11 +468,14 @@ Install with [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 if need
 the wheel for your system:
 
 ```bash
-uv tool install py-screen-mux      # the command is pys
+uv tool install py-screen          # the command is pys
 ```
 
-The package is `py-screen-mux` on PyPI because `py-screen` is too close to an existing
-`pyscreen` there; the import is `py_screen` and the command `pys`.
+The import is `py_screen` and the command `pys`. Until 20261109.2 the package was
+`py-screen-mux` (an older `pyscreen` held the name); that name still installs, each release,
+the same version of `py-screen`, so `uv tool upgrade py-screen-mux` keeps working. To move
+to the new name: `uv tool uninstall py-screen-mux && uv tool install py-screen`, then
+`pys setup --yes` (it points the skills and the hook at the new install).
 
 Or take the **ready-to-use bundle** for your system from the
 [release](https://github.com/congzhangzh/py-screen/releases): `pys-<version>-<os>-<arch>.tar.gz`
