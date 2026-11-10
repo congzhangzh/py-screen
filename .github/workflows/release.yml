@@ -199,6 +199,17 @@ jobs:
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
       - name: Smoke test on the vterm engine
         run: PYS_TERM=vterm uv run --no-project --python 3.14 python release/smoke.py
+      - name: py-screen-mux, the old name, installs this py-screen and gives its commands
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          VERSION: ${{ needs.sdist.outputs.version }}
+        run: |
+          uv run --no-project --python 3.14 python release/mux_shim.py --version "$VERSION" --out shim
+          uv venv -q --python 3.14 shimcheck
+          uv pip install -q --python shimcheck/bin/python --find-links dist --find-links shim \
+            "py-screen-mux==$VERSION"
+          shimcheck/bin/pys sample-config | grep -q "sample pys config"
+          shimcheck/bin/pys-agents skills | grep -q pys-drive
       - name: The agent tools as installed (a stand-in claude, typed into through pys send)
         env:
           VERSION: ${{ needs.sdist.outputs.version }}
@@ -395,13 +406,8 @@ jobs:
         env:
           VERSION: ${{ needs.sdist.outputs.version }}
         run: |
+          # smoke (ubuntu) checked that it gives a working pys from this release's wheel
           uv run --no-project --python 3.14 python src/release/mux_shim.py --version "$VERSION" --out shim
-          # it must give a working pys from this release's own wheel, before it is published
-          uv venv -q --python 3.14 shimcheck
-          uv pip install -q --python shimcheck/bin/python --find-links dist --find-links shim \
-            "py-screen-mux==$VERSION"
-          shimcheck/bin/pys sample-config | grep -q "sample pys config"
-          shimcheck/bin/pys-agents skills | grep -q pys-drive
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # a rerun after a failure past this point finds its files already there
