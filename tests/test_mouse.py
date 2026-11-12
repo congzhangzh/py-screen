@@ -140,6 +140,25 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         row = t.text().splitlines()[-1]
         click(t, row.index(" 2 ") + 1, 29)
         wait(lambda: json.loads(sess.pys("ls", "--json"))["current"] == 2, what=lambda: t.text())
+
+        # The + before the tabs opens a new window and selects it, as prefix c does
+        def wids():
+            return [w["wid"] for w in json.loads(sess.pys("ls", "--json"))["windows"]]
+        before = wids()
+        row = t.text().splitlines()[-1]
+        assert row.startswith(" pys  + ")
+        click(t, row.index(" + ") + 1, 29)
+        wait(lambda: len(wids()) == len(before) + 1, what=lambda: t.text())
+        new = max(wids())
+        assert json.loads(sess.pys("ls", "--json"))["current"] == new
+        t.wait_for(f" {new}* sh")
+
+        # A middle-click on a tab kills that window, the one in front or not
+        row = t.text().splitlines()[-1]
+        x = re.search(r" 2[-*!]? ", row).start() + 1   # 2- : the one you were in before
+        t.send(sgr(1, x, 29) + sgr(1, x, 29, True))
+        wait(lambda: 2 not in wids(), what=lambda: sess.pys("ls", "--json"))
+        assert new in wids() and json.loads(sess.pys("ls", "--json"))["current"] == new
     finally:
         t.close()
         sess.kill()

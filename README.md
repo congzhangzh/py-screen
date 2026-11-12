@@ -139,6 +139,8 @@ On by default, like tmux's `mouse on`:
 |-------|------|
 | click a pane | focus it; its app gets the click too if it asked for the mouse |
 | click a window in the status line | select it |
+| middle-click a window in the status line | kill it (as prefix `X` does for the one in front), as a browser closes a tab |
+| click the `+` after ` pys ` | open a new window in the folder of the one in front (as prefix `c`); shown only while the mouse is on |
 | drag a `│` separator or a caption line | resize the panes on both sides |
 | wheel, touch drag | goes to the pane under the pointer, focused or not: an app that asked for the mouse gets it; a full-screen app that didn't (less, man) gets arrow keys; anything else (a shell, Claude Code) scrolls back through its history (see Scrollback) |
 | Shift+drag | select text in your terminal (most terminals; the mouse is pys's otherwise) |

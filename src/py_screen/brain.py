@@ -103,9 +103,11 @@ NO_PREFIX = [
     ("F2", "window list"),
     ("Shift-PgUp / PgDn", "scroll back / forward; any key goes back to live"),
 ]
+NEW_TAB = " + "          # the status line's new-window button, after " pys "
 MOUSE_HELP = [
     ("click", "focus a pane; mouse apps get the click too"),
-    ("click the status line", "select that window"),
+    ("click a window in the status line", "select it; a middle-click kills it"),
+    ("click + in the status line", "a new window, in the folder of the one in front"),
     ("drag a border", "resize: a │ separator or a caption line"),
     ("wheel, touch drag", "scroll back the pane under it; arrows for vim, less"),
     ("Shift+drag", "your terminal selects; copy with its key, not C-c"),
@@ -766,7 +768,7 @@ class Brain:
                 f" window {g['ended']} ended: {held}keys wait a moment before they go to "
                 f"window {g['now']} ", cols) + "\x1b[0m"
         right_parts, right_w = self.status_right(cols)
-        left, left_w = "\x1b[0;30;46m pys \x1b[0m", 5
+        left, left_w = self.status_left()
         used = 0
         for wid, label, x in self.status_tabs(right_w, cols):
             color = ("\x1b[0;30;43m" if wid == self.current else
@@ -776,8 +778,16 @@ class Brain:
         gap = " " * max(0, cols - left_w - used - right_w)
         return row + left + gap + "".join(right_parts) + "\x1b[0m"
 
+    def status_left(self) -> tuple[str, int]:
+        """What starts the status line: " pys " and, with the mouse on, the " + " button that
+        opens a new window (a + you can't click would only take room); and its width, where
+        the window tabs start."""
+        if not self.cfg.mouse:
+            return "\x1b[0;30;46m pys \x1b[0m", 5
+        return "\x1b[0;30;46m pys \x1b[0;1;36m + \x1b[0m", 5 + width(NEW_TAB)
+
     def status_right(self, cols: int | None = None) -> tuple[list[str], int]:
-        """The widgets, cut to fit: they get at most two thirds of the line after " pys ",
+        """The widgets, cut to fit: they get at most two thirds of the line after " pys + ",
         so the window tabs keep a third. A widget that doesn't fit is cut from its left
         ("…" marks the cut) and the ones before it are dropped, so the last widgets (load,
         clock) stay. Without the cut, a long widget ran past the bottom-right corner and
@@ -788,7 +798,7 @@ class Brain:
         if self.cfg.error:
             texts.insert(0, self.cfg.error)
         cols = self.cols if cols is None else cols
-        budget = max(0, cols - 5 - cols // 3)
+        budget = max(0, cols - self.status_left()[1] - cols // 3)
         right_parts: list[str] = []
         right_w = 0
         for i in range(len(texts) - 1, -1, -1):
@@ -810,7 +820,8 @@ class Brain:
         is never left out for that: room for a short label (" 7! ") is kept for each one
         further on, so it shows short where its whole label doesn't fit."""
         cols = self.cols if cols is None else cols
-        x, budget, out = 5, max(0, cols - 5 - right_w), []
+        x0 = x = self.status_left()[1]
+        budget, out = max(0, cols - x0 - right_w), []
         short = {wid: f" {wid}! " for wid in self.order if self.wins[wid].attn}
         keep = sum(width(t) for t in short.values())      # room kept for those further on
         full = True                                       # whole labels still fit
@@ -821,9 +832,9 @@ class Brain:
             flag = ("*" if wid == self.current else "!" if w.attn else
                     "-" if wid == self.last else "")
             label = f" {wid}{flag} {w.name} "
-            if full and x - 5 + width(label) + keep <= budget:
+            if full and x - x0 + width(label) + keep <= budget:
                 pass
-            elif wid in short and x - 5 + width(short[wid]) + keep <= budget:
+            elif wid in short and x - x0 + width(short[wid]) + keep <= budget:
                 full, label = False, short[wid]
             else:
                 full = False
@@ -1183,7 +1194,7 @@ class Brain:
                 if isinstance(part, bytes):
                     await self.key_bytes(c, part)
                 else:
-                    self.on_mouse(c, part)
+                    await self.on_mouse(c, part)
             return
         await self.key_bytes(c, data)
 
@@ -1252,7 +1263,7 @@ class Brain:
         key = (b"\x1bO" if app_keys else b"\x1b[") + (b"A" if up else b"B")
         self.to_keeper(proto.pack(proto.DATA, w.wid, key * WHEEL_LINES))
 
-    def on_mouse(self, c: Client, ev: mouse.Event) -> None:
+    async def on_mouse(self, c: Client, ev: mouse.Event) -> None:
         if c.mode == "help":
             if ev.wheel:
                 if not ev.release and self.help_pages(c) > 1:
@@ -1309,10 +1320,8 @@ class Brain:
             return
         if not ev.press:
             return
-        if ev.y == self.rows - 1:                 # the status line: pick a window
-            for wid, label, x in self.status_tabs(self.status_right()[1]):
-                if x <= ev.x < x + width(label):
-                    self.select(wid)
+        if ev.y == self.rows - 1:                 # the status line
+            await self.status_click(ev)
             return
         if p is not None:
             self.focus_pane(p)
@@ -1322,6 +1331,25 @@ class Brain:
                 return
         if ev.button == 0 and (b := self.layout.boundary_at(ev.x, ev.y)):
             c.drag = b
+
+    async def status_click(self, ev: mouse.Event) -> None:
+        """A press on the status line, as a tab bar works in a GUI: the + opens a new
+        window (as prefix c does), a click on a window's tab selects it, a middle-click on
+        it kills that window (as prefix X does for the one in front)."""
+        x0 = self.status_left()[1]
+        if self.cfg.mouse and x0 - width(NEW_TAB) <= ev.x < x0:
+            if ev.button == 0:
+                w = await self.new_window_here()
+                self.select(w.wid)
+            return
+        for wid, label, x in self.status_tabs(self.status_right()[1]):
+            if x <= ev.x < x + width(label):
+                if ev.button == 1:
+                    log(f"middle-click on its tab: kill window {wid}")
+                    self.to_keeper(proto.pack_ctl({"op": "kill", "wid": wid}))
+                else:
+                    self.select(wid)
+                return
 
     async def key_bytes(self, c: Client, data: bytes) -> None:
         if c.mode:
