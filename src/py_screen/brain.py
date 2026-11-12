@@ -247,7 +247,9 @@ class Brain:
         self.last: int | None = None             # for C-a Space / C-a C-a
         self.widgets_shown: bool | None = None   # prefix S; None: SHOW_WIDGETS decides
         self.clients: list[Client] = []
-        self.cols, self.rows = 80, 24            # outer size; panes share rows - 1
+        self.cols, self.rows = 80, 24            # outer size; panes share rows - status_h
+        self.status_h = 1                        # the status line's rows (STATUS_LINES at most)
+        self.status_shrink = False               # it may give a row back at the next fit
         self.keeper_w: asyncio.StreamWriter | None = None
         self.pending: dict[str, asyncio.Future] = {}
         self.tag_n = 0
@@ -347,12 +349,13 @@ class Brain:
         self.order.append(w.wid)
         if self.layout.focus.wid is None and len(self.layout.panes()) == 1:
             self.layout.focus.wid = w.wid
-        self.status_dirty = True
+        self.status_dirty = self.status_shrink = True
         self.changed()
         return w
 
     def remove_window(self, wid: int) -> None:
         was_focused = self.layout.focus.wid == wid
+        self.status_shrink = True
         self.wins.pop(wid, None)
         if wid in self.order:
             self.order.remove(wid)
@@ -553,6 +556,8 @@ class Brain:
     def set_size(self, cols: int, rows: int) -> None:
         if (cols, rows) != (self.cols, self.rows):
             self.cols, self.rows = cols, rows
+            self.status_shrink = True
+            self.fit_status()
             self.relayout()
 
     def activate(self, c: Client) -> None:
@@ -572,7 +577,7 @@ class Brain:
         change of focus and every attach comes here, so this is where a window's
         attention mark goes when you get to it."""
         self.saw_focused()
-        self.layout.place(self.cols, self.rows - 1)
+        self.layout.place(self.cols, self.rows - self.status_h)
         for p in self.layout.panes():
             w = self.wins.get(p.wid) if p.wid is not None else None
             if w and (w.term.columns, w.term.lines) != (p.w, p.text_h):
@@ -702,10 +707,9 @@ class Brain:
         w = p.w if vc is None else min(p.w, vc - p.x)
         return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y - back, w)
 
-    @staticmethod
-    def shown(p: Pane, y: int, vc: int, vr: int) -> bool:
+    def shown(self, p: Pane, y: int, vc: int, vr: int) -> bool:
         """Pane row y (the caption is y = p.h - 1) is inside view (vc, vr)."""
-        return p.x < vc and p.y + y < vr - 1
+        return p.x < vc and p.y + y < vr - self.status_h
 
     def caption(self, p: Pane, vc: int | None = None) -> str:
         w = self.wins.get(p.wid) if p.wid is not None else None
@@ -747,36 +751,73 @@ class Brain:
     def separators(self, vc: int, vr: int) -> str:
         return "".join(f"\x1b[{y + i + 1};{x + 1}H\x1b[0;90m│\x1b[0m"
                        for x, y, h in self.layout.separators for i in range(h)
-                       if x < vc and y + i < vr - 1)
+                       if x < vc and y + i < vr - self.status_h)
 
     def status_line(self, c: Client | None = None) -> str:
+        """The status line: its rows at the bottom of the view. The window tabs flow like
+        text from its first row, after " pys + "; the widgets sit at the right of its last
+        row. A mode (rename, copy, resize, the key hold) says what it does on the last row."""
         cols, rows = self.view(c)
-        row = f"\x1b[{rows};1H"
+        h = self.status_h
+        msg = self.status_message(c, cols)
+        right_parts, right_w = ([], 0) if msg is not None else self.status_right(cols)
+        left, left_w = self.status_left()
+        lines = [left if i == 0 else "" for i in range(h)]
+        used = [left_w if i == 0 else 0 for i in range(h)]
+        for wid, label, x, r in self.status_tabs(right_w, cols, h)[0]:
+            if msg is not None and r == h - 1:
+                continue
+            color = ("\x1b[0;30;43m" if wid == self.current else
+                     ATTN_COLORS.get(self.wins[wid].attn, ""))
+            lines[r] += f"{color}{label}\x1b[0m" if color else label
+            used[r] = x + width(label)
+        out = []
+        for i in range(h):
+            row = f"\x1b[{rows - h + i + 1};1H"
+            if i == h - 1 and msg is not None:
+                out.append(row + msg)
+            elif i == h - 1:
+                gap = " " * max(0, cols - used[i] - right_w)
+                out.append(row + lines[i] + gap + "".join(right_parts) + "\x1b[0m")
+            else:
+                out.append(row + lines[i] + "\x1b[0m" + " " * max(0, cols - used[i]))
+        return "".join(out)
+
+    def status_message(self, c: Client | None, cols: int) -> str | None:
+        """What a mode shows in place of the last row's tabs and widgets, if one is on."""
         if c and c.mode == "rename":
-            return row + "\x1b[0;30;46m" + fit(f" title for window {self.current}: {c.buf}▏",
-                                               cols) + "\x1b[0m"
+            return "\x1b[0;30;46m" + fit(f" title for window {self.current}: {c.buf}▏",
+                                         cols) + "\x1b[0m"
         if c and c.mode == "copy":
             w = self.wins.get(c.copy_wid) if c.copy_wid is not None else None
             if w and w.copy:
-                return row + "\x1b[0;30;46m" + fit(w.copy.status(), cols) + "\x1b[0m"
+                return "\x1b[0;30;46m" + fit(w.copy.status(), cols) + "\x1b[0m"
         if c and c.mode == "resize":
-            return row + "\x1b[0;30;46m" + fit(" resize: h/l width, j/k height, = equal, "
-                                               "other key ends", cols) + "\x1b[0m"
+            return "\x1b[0;30;46m" + fit(" resize: h/l width, j/k height, = equal, "
+                                         "other key ends", cols) + "\x1b[0m"
         if g := self.guard:
             held = f"{g['held']} key{'s' if g['held'] != 1 else ''} held, " if g["held"] else ""
-            return row + "\x1b[0;30;43m" + fit(
+            return "\x1b[0;30;43m" + fit(
                 f" window {g['ended']} ended: {held}keys wait a moment before they go to "
                 f"window {g['now']} ", cols) + "\x1b[0m"
-        right_parts, right_w = self.status_right(cols)
-        left, left_w = self.status_left()
-        used = 0
-        for wid, label, x in self.status_tabs(right_w, cols):
-            color = ("\x1b[0;30;43m" if wid == self.current else
-                     ATTN_COLORS.get(self.wins[wid].attn, ""))
-            left += f"{color}{label}\x1b[0m" if color else label
-            used = x + width(label) - left_w
-        gap = " " * max(0, cols - left_w - used - right_w)
-        return row + left + gap + "".join(right_parts) + "\x1b[0m"
+        return None
+
+    def fit_status(self) -> bool:
+        """Give the status line the rows its tabs need, up to STATUS_LINES (and never so
+        many that no pane row is left): it grows as soon as a tab would be left out, and
+        gives a row back only after a window opened or ended or the terminal was resized.
+        So a title or a widget that changes its length (an agent's busy / free) can't
+        make every pane jump by a row, and each app redraw. True if the rows changed."""
+        top = max(1, min(self.cfg.status_lines, self.rows - 2))
+        right_w = self.status_right()[1]
+        need = next((n for n in range(1, top + 1) if self.status_tabs(right_w, None, n)[1]), top)
+        shrink, self.status_shrink = self.status_shrink, False
+        h = self.status_h
+        if need > h or (shrink and need < h):
+            h = need
+        h = min(h, top)                           # a terminal too short for the rows it had
+        changed, self.status_h = h != self.status_h, h
+        return changed
 
     def status_left(self) -> tuple[str, int]:
         """What starts the status line: " pys " and, with the mouse on, the " + " button that
@@ -814,37 +855,54 @@ class Brain:
             right_w += width(seg)
         return right_parts, right_w
 
-    def status_tabs(self, right_w: int, cols: int | None = None) -> list[tuple[int, str, int]]:
-        """The window labels that fit in the status line: (wid, label, start column).
-        They go in order, whole, until one doesn't fit. A window that wants you (attn)
-        is never left out for that: room for a short label (" 7! ") is kept for each one
-        further on, so it shows short where its whole label doesn't fit."""
+    def status_tabs(self, right_w: int, cols: int | None = None, rows: int = 1
+                    ) -> tuple[list[tuple[int, str, int, int]], bool]:
+        """The window labels that fit in a status line of `rows` rows: ([(wid, label,
+        start column, row)], all of them whole). They flow in order like text, a row
+        after " pys + " first, then whole rows, then the last row up to the widgets; a
+        label goes to the next row when it doesn't fit (cut only when it is wider than a
+        whole row). On the last row they go, whole, until one doesn't fit. A window that
+        wants you (attn) is never left out for that: room for a short label (" 7! ") is
+        kept on the last row for each one further on, so it shows short there."""
         cols = self.cols if cols is None else cols
-        x0 = x = self.status_left()[1]
-        budget, out = max(0, cols - x0 - right_w), []
+        x0 = self.status_left()[1]
         short = {wid: f" {wid}! " for wid in self.order if self.wins[wid].attn}
         keep = sum(width(t) for t in short.values())      # room kept for those further on
         full = True                                       # whole labels still fit
+        out: list[tuple[int, str, int, int]] = []
+        r, x = 0, x0
         for wid in self.order:
             w = self.wins[wid]
             if wid in short:
                 keep -= width(short[wid])
             flag = ("*" if wid == self.current else "!" if w.attn else
                     "-" if wid == self.last else "")
-            label = f" {wid}{flag} {w.name} "
-            if full and x - x0 + width(label) + keep <= budget:
-                pass
-            elif wid in short and x - x0 + width(short[wid]) + keep <= budget:
-                full, label = False, short[wid]
-            else:
+            label: str | None = f" {wid}{flag} {w.name} "
+            while True:
+                last = r == rows - 1
+                end = max(0, cols - right_w) if last else cols
+                if full and x + width(label) + (keep if last else 0) <= end:
+                    break
+                if full and not last:
+                    if x > (x0 if r == 0 else 0):         # something on this row: wrap
+                        r, x = r + 1, 0
+                        continue
+                    label = fit(label, max(0, end - x))   # wider than a whole row
+                    break
                 full = False
+                if wid in short and x + width(short[wid]) + keep <= end:
+                    label = short[wid]
+                else:
+                    label = None
+                break
+            if label is None:
                 continue
-            out.append((wid, label, x))
+            out.append((wid, label, x, r))
             x += width(label)
-        return out
+        return out, full
 
     def window_list(self, c: Client) -> list[str]:
-        area = c.rows - 1
+        area = c.rows - self.status_h
         rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
             w = self.wins[wid]
@@ -885,7 +943,7 @@ class Brain:
         "(more)"; a heading never sits alone at the bottom. Returns the
         columns, how many fit side by side (only as many as fit without cutting a key's
         text) and the height. Rows carry the wid of a window row, for digits and clicks."""
-        h = max(1, c.rows - 1 - 3)            # between title + blank and the footer
+        h = max(1, c.rows - self.status_h - 3)   # between title + blank and the footer
         secs = self.help_sections(c)
         need = max(width(t) for sec in secs[1:] for t in sec) + 2
         per_page = max(1, min(3, c.cols // need))
@@ -914,7 +972,7 @@ class Brain:
         c.help_page %= pages
         shown = cols[c.help_page * per_page:(c.help_page + 1) * per_page]
         cw = c.cols // per_page
-        area = c.rows - 1
+        area = c.rows - self.status_h
         c.help_hits, c.help_cw = {}, cw
         lines = [" py-screen help", ""]
         for k in range(h):
@@ -941,6 +999,8 @@ class Brain:
         self.last_render = time.monotonic()
         if not self.clients:
             return                                # parse later, when someone looks
+        if self.status_dirty and self.fit_status():
+            self.relayout()                       # this frame draws the new layout whole
         dirty_rows = []
         whole: list[Pane] = []                    # panes drawn whole: a scrolled view moved
         for p in self.layout.panes():
@@ -1026,7 +1086,7 @@ class Brain:
                 else:
                     body = body_dirty(vc, vr) + (self.status_line(c) if self.status_dirty else "")
             cur = ""
-            if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - 1:
+            if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - self.status_h:
                 cur = f"\x1b[{cursor[1] + 1};{cursor[0] + 1}H" + ("\x1b[?25h" if show_cursor else "")
             mw = overlay_mouse if overlay else want | mouse_want
             # Resets before sets. Mouse tracking 1000 / 1002 / 1003 is one setting in
@@ -1152,7 +1212,7 @@ class Brain:
         c = Client(wr, prefix=self.client_prefix(hello), cols=hello["cols"], rows=hello["rows"])
         self.clients.append(c)
         self.activate(c)
-        self.layout.place(self.cols, self.rows - 1)
+        self.layout.place(self.cols, self.rows - self.status_h)
         if not self.wins:
             w = await self.spawn(cwd=hello.get("cwd"))
             self.layout.focus.wid = w.wid
@@ -1308,7 +1368,8 @@ class Brain:
                     c.grab = None
                 return
             c.grab = None
-        p = self.layout.pane_at(ev.x, ev.y) if ev.y < self.rows - 1 else None
+        top = self.rows - self.status_h           # the status line's first row
+        p = self.layout.pane_at(ev.x, ev.y) if ev.y < top else None
         in_text = p is not None and ev.y < p.y + p.text_h
         if ev.wheel:
             if in_text and not self.to_pane(p, ev):
@@ -1320,8 +1381,8 @@ class Brain:
             return
         if not ev.press:
             return
-        if ev.y == self.rows - 1:                 # the status line
-            await self.status_click(ev)
+        if ev.y >= top:                           # the status line
+            await self.status_click(ev, ev.y - top)
             return
         if p is not None:
             self.focus_pane(p)
@@ -1332,18 +1393,18 @@ class Brain:
         if ev.button == 0 and (b := self.layout.boundary_at(ev.x, ev.y)):
             c.drag = b
 
-    async def status_click(self, ev: mouse.Event) -> None:
+    async def status_click(self, ev: mouse.Event, row: int) -> None:
         """A press on the status line, as a tab bar works in a GUI: the + opens a new
         window (as prefix c does), a click on a window's tab selects it, a middle-click on
         it kills that window (as prefix X does for the one in front)."""
         x0 = self.status_left()[1]
-        if self.cfg.mouse and x0 - width(NEW_TAB) <= ev.x < x0:
+        if self.cfg.mouse and row == 0 and x0 - width(NEW_TAB) <= ev.x < x0:
             if ev.button == 0:
                 w = await self.new_window_here()
                 self.select(w.wid)
             return
-        for wid, label, x in self.status_tabs(self.status_right()[1]):
-            if x <= ev.x < x + width(label):
+        for wid, label, x, r in self.status_tabs(self.status_right()[1], None, self.status_h)[0]:
+            if r == row and x <= ev.x < x + width(label):
                 if ev.button == 1:
                     log(f"middle-click on its tab: kill window {wid}")
                     self.to_keeper(proto.pack_ctl({"op": "kill", "wid": wid}))
@@ -1396,7 +1457,7 @@ class Brain:
         fw = self.focused_window()
         cwd = fw.cwd() if fw else None
         self.layout.split(vertical, None)
-        self.layout.place(self.cols, self.rows - 1)
+        self.layout.place(self.cols, self.rows - self.status_h)
         if with_window:
             w = await self.spawn(cwd=cwd)
             self.layout.focus.wid = w.wid

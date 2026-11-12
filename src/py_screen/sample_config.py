@@ -5,7 +5,7 @@
 #
 # The file is plain Python, run on every brain start. pys passes in the helpers cmd(),
 # load() and clock(), and reads WIDGETS, BIND, PREFIX, MOUSE, SCROLLBACK, SHOW_WIDGETS,
-# ON_CHANGE, KILL_HOOK_TIMEOUT, SESSIONS_KEEP_ENV and CAPTION from it.
+# STATUS_LINES, ON_CHANGE, KILL_HOOK_TIMEOUT, SESSIONS_KEEP_ENV and CAPTION from it.
 #
 # A status widget is any object with three things, so you can write your own here
 # without changing pys itself:
@@ -285,6 +285,8 @@ BIND = {
 # MOUSE = True         # False: plain drags select text in the terminal again
 # SCROLLBACK = 5000    # rows of history per window; 0 = none
 # SHOW_WIDGETS = True  # False: start with the widgets hidden (prefix S toggles them)
+# STATUS_LINES = 2     # the window tabs wrap onto up to this many status rows when they
+#                      # don't fit in one; 1 = one row, a tab that doesn't fit is left out
 
 # ON_CHANGE: a command pys runs (about 2 s after) a window opens or exits, a title changes or
 # the brain starts, with PYS_EVENT=change; and once more right before `pys kill` or prefix Q

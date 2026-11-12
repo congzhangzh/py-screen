@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import config
 
-KEYS = ["WIDGETS", "BIND", "PREFIX", "MOUSE", "SCROLLBACK", "SHOW_WIDGETS", "ON_CHANGE",
+KEYS = ["WIDGETS", "BIND", "PREFIX", "MOUSE", "SCROLLBACK", "SHOW_WIDGETS", "STATUS_LINES", "ON_CHANGE",
         "KILL_HOOK_TIMEOUT", "SESSIONS_KEEP_ENV", "CAPTION"]
 UPDATE_TIMEOUT = 5.0
 SAMPLE = Path(__file__).parent / "sample_config.py"

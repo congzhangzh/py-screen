@@ -18,6 +18,8 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
                                               # select text in the terminal again
     SCROLLBACK = 5000                         # rows of history per window (the wheel and
                                               # Shift-PgUp scroll it); 0 = none
+    STATUS_LINES = 2                          # the window tabs wrap onto up to this many
+                                              # status rows, only while one doesn't hold them
     ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # run after windows change and
                                               # before `pys kill` / prefix Q ends them
     KILL_HOOK_TIMEOUT = 5                     # seconds a kill waits for ON_CHANGE
@@ -125,6 +127,7 @@ def clock(fmt: str = "%m-%d %H:%M") -> Clock:
     return Clock(every=1.0, fmt=fmt)
 
 
+STATUS_LINES = 2       # rows the status line may take when the window tabs don't fit in one
 SCROLLBACK = 5000      # rows a window keeps; a row costs ~36 bytes per cell it shows
 KILL_HOOK_TIMEOUT = 5.0   # seconds `pys kill` / prefix Q wait for ON_CHANGE before ending
 
@@ -138,6 +141,7 @@ class Config:
     mouse: bool = True
     scrollback: int = SCROLLBACK
     show_widgets: bool = True     # the status line's right side; prefix S toggles it
+    status_lines: int = STATUS_LINES   # at most this many status rows, more only if needed
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
     sessions_keep_env: list[str] = field(default_factory=list)   # for pys-sessions only
@@ -231,6 +235,10 @@ def load_config() -> Config:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):
         cfg.error = "config error: SCROLLBACK"
+    try:
+        cfg.status_lines = max(1, int(ns.get("STATUS_LINES", STATUS_LINES)))
+    except (TypeError, ValueError):
+        cfg.error = "config error: STATUS_LINES"
     hook = ns.get("ON_CHANGE")
     if isinstance(hook, str):
         hook = [hook]

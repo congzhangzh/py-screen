@@ -248,6 +248,23 @@ WIDGETS = [cmd(["git", "-C", "{cwd}", "branch", "--show-current"], every=10), lo
 BIND = {"T": ("top", ["htop"])}   # C-a T opens a window running htop
 MOUSE = True                      # False: plain drags select text in the terminal
 SCROLLBACK = 5000                 # rows of history per window; 0 = none
+STATUS_LINES = 2                  # rows the window tabs may take; 1 = one row, as before
+```
+
+**The status line grows a row when the tabs don't fit** (up to `STATUS_LINES`, 2 by
+default). The tabs flow like text from its first row, after ` pys + `; the widgets stay at
+the right of its last row, with the budget they always have (two thirds of a row at most).
+It takes a row as soon as a tab would be left out, and gives it back only when a window
+opens or ends or the terminal is resized, never because a title or a widget got shorter:
+each change of its height resizes every pane, and each app redraws, so an agent title that
+goes `busy` / `free` must not make the screen jump. When even `STATUS_LINES` rows are not
+enough, the tabs that don't fit are left out as before (a window that wants you still shows
+short, ` 7! `), and the window list (`F2`) has them all.
+
+```
+ 0 sh  ~/projects/py-screen
+ pys  +  0* sh  1 sh  2 sh  3 sh  4 sh  5 sh  6 sh  7 sh
+ 8 sh  9 sh                               3.16  11-11 19:19
 ```
 
 `pys sample-config` prints a fuller sample to start from (`pys sample-config >
