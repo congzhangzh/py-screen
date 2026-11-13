@@ -6,3 +6,4 @@ private/
 build/
 *.so
 *.pyd
+src/py_screen/_build.py

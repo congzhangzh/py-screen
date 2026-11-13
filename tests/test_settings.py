@@ -27,6 +27,18 @@ def test_the_file_reads_back_only_plain_values(tmp_path):
     assert not list(tmp_path.glob(".*.tmp"))              # the atomic write left nothing
 
 
+def test_the_about_line():
+    from py_screen import about
+    assert about.SLOGAN in about.line()
+    import subprocess
+    from pathlib import Path
+    repo = Path(about.__file__).resolve().parents[2]
+    if (repo / ".git").exists():                          # tests run from a checkout
+        sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=7", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+        assert sha in about.version() and "0.1.0" not in about.version()
+
+
 def test_step():
     assert settings.step("BUTTONS", True) is False
     assert settings.step("STATUS_LINES", 2) == 3 and settings.step("STATUS_LINES", 3) == 1
@@ -50,6 +62,7 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         t.wait_for(" py-screen settings")
         assert "from config.py" in t.text()               # STATUS_LINES' row says where
         assert " Files pys uses" in t.text() and "✓ config" in t.text()
+        assert "dev · " in t.text().splitlines()[0]      # the version, right of the title
         assert "this pys's code" in t.text()
         t.send(b"\r")                                     # row 1: the buttons, off
         wait(lambda: kept.exists() and "BUTTONS = False" in kept.read_text(),

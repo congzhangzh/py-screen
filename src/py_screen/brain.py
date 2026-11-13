@@ -23,7 +23,7 @@ from pathlib import Path
 from wcwidth import wcswidth
 
 from . import config as cfgmod
-from . import mouse, platform, proto, settings, term
+from . import about, mouse, platform, proto, settings, term
 from .copymode import Copy
 from .layout import Layout, Pane, Split
 
@@ -1016,7 +1016,7 @@ class Brain:
         cw = c.cols // per_page
         area = c.rows - self.status_h
         c.help_hits, c.help_cw = {}, cw
-        lines = [" py-screen help", ""]
+        lines = [self.title_bar(" py-screen help", c.cols), ""]
         for k in range(h):
             parts = []
             for j, col in enumerate(shown):
@@ -1039,6 +1039,17 @@ class Brain:
     # ---- the settings panel ---------------------------------------------------------
     SETTINGS_TOP = 2                      # the panel's first setting row on the screen
 
+    @staticmethod
+    def title_bar(title: str, cols: int) -> str:
+        """An overlay's title, with what this pys is and who made it at the right, quiet:
+        the whole line where it fits beside the title, else the version alone (a phone),
+        else the title alone."""
+        for right in (f"{about.line()} ", f"{about.version()} "):
+            gap = cols - width(title) - width(right)
+            if gap >= 2:
+                return title + " " * gap + right
+        return title
+
     def open_settings(self, c: Client) -> None:
         c.mode, c.settings_idx, c.settings_msg = "settings", 0, ""
         try:
@@ -1051,7 +1062,8 @@ class Brain:
     def settings_screen(self, c: Client) -> list[str]:
         """The settings panel: one row per setting, its value and where it comes from."""
         area = c.rows - self.status_h
-        lines: list[tuple[str, str]] = [(" py-screen settings", "\x1b[0;30;46m"), ("", "")]
+        lines: list[tuple[str, str]] = [(self.title_bar(" py-screen settings", c.cols),
+                                          "\x1b[0;30;46m"), ("", "")]
         for i, (key, fieldname, what, _values) in enumerate(settings.ROWS):
             v = getattr(self.cfg, fieldname)
             shown = ("on" if v else "off") if isinstance(v, bool) else str(v)

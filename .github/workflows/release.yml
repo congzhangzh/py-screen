@@ -115,8 +115,11 @@ jobs:
       - name: Build the sdist
         run: |
           uv version --frozen "${{ steps.v.outputs.version }}"
+          # the commit, for the version line in the help and the settings (about.py)
+          printf 'COMMIT = "%s"\n' "${{ steps.v.outputs.sha }}" > src/py_screen/_build.py
           uv build --sdist
           tar -tzf dist/*.tar.gz | grep -E 'deps/libvterm/(LICENSE|src/vterm\.c)$|_vterm\.c$'
+          tar -tzf dist/*.tar.gz | grep -q 'src/py_screen/_build\.py$'
       - uses: actions/upload-artifact@v4
         with:
           name: sdist

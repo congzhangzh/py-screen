@@ -124,6 +124,7 @@ set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFI
 | `,` | rename the window |
 | `S` | hide / show the widgets on the right of the status line, so the window tabs get the whole line (kept across a reload; `SHOW_WIDGETS = False` in the config starts hidden) |
 | `?` | help: the windows (a digit or a click selects one), these keys, your config's bindings; Space pages when it does not fit |
+| `o` | settings (also a click on ` pys `): see below |
 | `a` | send a literal prefix |
 | `d` · `C-l` · `R` · `Q` | detach · redraw · reload the brain · quit everything |
 
@@ -207,6 +208,20 @@ none) and screen (`alt`) its app asked for: an app with a mouse mode gets the wh
 A row costs about 36 bytes per cell up to its last visible one: a window full of
 100-column lines holds ~18 MB at 5000 rows. Keeping rows has a price on floods too: about
 0.2 µs a line (see `bench/README.md`).
+
+### Settings
+
+Prefix `o`, or a click on ` pys `, opens the settings: the buttons (`BUTTONS`), the status
+rows the tabs may take (`STATUS_LINES`), the widgets (`SHOW_WIDGETS`) and the mouse
+(`MOUSE`), each with its value and where it comes from (default, config.py, set here). A
+click or Enter on a row changes it at once and keeps it in
+`~/.config/pys/config.d/50-settings.py`, a file the panel writes whole; your `config.py` is
+never touched, and as config.d runs after it, a value set here wins. Below, **Files pys
+uses**: your config and its drop-ins, the skills linked into Claude Code and where they point,
+the pys hooks in Claude Code's `settings.json`, this pys's code and the Python that runs it;
+`✓` there, `⚠` another install's, `✗` missing (`pys setup` adds it). The title bar of the
+settings and of the help says which pys this is, `20261113.3 · 1a2b3c4` (a checkout says
+`dev` and its commit), and who made it: *many windows, one Brahman*.
 
 ### Config
 
