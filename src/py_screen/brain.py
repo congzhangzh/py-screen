@@ -23,7 +23,7 @@ from pathlib import Path
 from wcwidth import wcswidth
 
 from . import config as cfgmod
-from . import mouse, platform, proto, term
+from . import mouse, platform, proto, settings, term
 from .copymode import Copy
 from .layout import Layout, Pane, Split
 
@@ -94,7 +94,7 @@ HELP = [
     ("S", "hide / show the widgets (the tabs get the line)"),
     ("a", "send a literal prefix"),
     ("[ / ]", "copy mode (/ ? search, v select, y copy, q) / paste"),
-    ("?", "this help"),
+    ("? / o", "this help / settings (buttons, status rows, mouse)"),
     ("d / C-l / R / Q", "detach / redraw / reload the brain / quit everything"),
 ]
 NO_PREFIX = [
@@ -118,6 +118,7 @@ MOUSE_HELP = [
     ("click + in the status line", "a new window, in the folder of the one in front"),
     ("click ▾ in the status line", "the window list; ✕ on a row, twice, closes it"),
     ("click ? in the status line", "this help"),
+    ("click pys in the status line", "the settings (as prefix o)"),
     ("drag a border", "resize: a │ separator or a caption line"),
     ("wheel, touch drag", "scroll back the pane under it; arrows for vim, less"),
     ("Shift+drag", "your terminal selects; copy with its key, not C-c"),
@@ -238,6 +239,9 @@ class Client:
     mode: str | None = None       # None | "list" | "rename" | "resize"
     list_idx: int = 0
     list_close: int | None = None  # the window whose ✕ in the list was clicked once
+    settings_idx: int = 0         # the settings panel's highlighted row
+    settings_msg: str = ""        # what the last change said (where it is kept, or an error)
+    settings_files: list = field(default_factory=list)   # "Files pys uses", read at open
     buf: str = ""
     grab: Pane | None = None      # the pane that got a press: its drag and release follow
     drag: tuple[Split, int] | None = None   # a border being dragged
@@ -1032,6 +1036,70 @@ class Brain:
             out.append(f"\x1b[{y + 1};1H{attr}{fit(text, c.cols)}\x1b[0m")
         return out
 
+    # ---- the settings panel ---------------------------------------------------------
+    SETTINGS_TOP = 2                      # the panel's first setting row on the screen
+
+    def open_settings(self, c: Client) -> None:
+        c.mode, c.settings_idx, c.settings_msg = "settings", 0, ""
+        try:
+            c.settings_files = settings.files()
+        except Exception as e:                   # an odd file must not stop the panel
+            c.settings_files = [("⚠", "files", "", f"could not read them: {e!r}")]
+            log(f"settings: files: {e!r}")
+        self.schedule_render()
+
+    def settings_screen(self, c: Client) -> list[str]:
+        """The settings panel: one row per setting, its value and where it comes from."""
+        area = c.rows - self.status_h
+        lines: list[tuple[str, str]] = [(" py-screen settings", "\x1b[0;30;46m"), ("", "")]
+        for i, (key, fieldname, what, _values) in enumerate(settings.ROWS):
+            v = getattr(self.cfg, fieldname)
+            shown = ("on" if v else "off") if isinstance(v, bool) else str(v)
+            src = self.cfg.origin.get(key)
+            src = "set here" if src == settings.FILE else f"from {src}" if src else "default"
+            text = f"   {what:<46} {shown:>4}   {src}"
+            lines.append((text, "\x1b[0;30;43m" if i == c.settings_idx else ""))
+        lines += [("", ""),
+                  (" a click or Enter changes a row · ↑↓ · q closes", ""),
+                  (f" kept in {cfgmod.home_path(str(settings.path()))}, which wins over "
+                   "config.py", "\x1b[0;90m")]
+        if c.settings_msg:
+            lines.append((f" {c.settings_msg}", "\x1b[0;33m"))
+        if c.settings_files:
+            lines += [("", ""), (" Files pys uses", "\x1b[0;1;36m")]
+            for state, kind, where, what in c.settings_files:
+                attr = {"⚠": "\x1b[0;33m", "✗": "\x1b[0;31m"}.get(state, "")
+                lines.append((f"   {state} {kind:<8} {what:<34} {where}", attr))   # a cut
+                # takes the path's end, never what it is
+        out = []
+        for y in range(area):
+            text, attr = lines[y] if y < len(lines) else ("", "")
+            out.append(f"\x1b[{y + 1};1H{attr or chr(27) + '[0m'}{fit(text, c.cols)}\x1b[0m")
+        return out
+
+    def change_setting(self, c: Client, i: int) -> None:
+        """Step setting i to its next value: at once, and kept in the panel's file."""
+        key, fieldname, _what, _values = settings.ROWS[i]
+        value = settings.step(key, getattr(self.cfg, fieldname))
+        setattr(self.cfg, fieldname, value)
+        if key == "SHOW_WIDGETS":
+            self.widgets_shown = None             # prefix S's choice gives way to this one
+        if key == "STATUS_LINES":
+            self.status_shrink = True             # fewer rows may be allowed now
+        try:
+            values = settings.read()
+            values[key] = value
+            settings.write(values)
+            self.cfg.origin[key] = settings.FILE
+            c.settings_msg = f"{key} = {value!r}"
+        except OSError as e:
+            c.settings_msg = f"{key} = {value!r} for now; not kept: {e}"
+            log(f"settings: {c.settings_msg}")
+        if key == "MOUSE" and not value:
+            c.settings_msg += " · the mouse is off: Enter on this row turns it on"
+        self.fit_status()
+        self.relayout()
+
     def render(self) -> None:
         self.render_handle = None
         self.last_render = time.monotonic()
@@ -1108,9 +1176,10 @@ class Brain:
                 c.stale = True                # slow client: skip, redraw fully later
                 continue
             vc, vr = c.cols, c.rows
-            overlay = c.mode in ("list", "help")
+            overlay = c.mode in ("list", "help", "settings")
             if overlay:                       # it owns the screen: only its changed rows go out
-                rows = self.window_list(c) if c.mode == "list" else self.help_screen(c)
+                rows = (self.window_list(c) if c.mode == "list" else
+                        self.settings_screen(c) if c.mode == "settings" else self.help_screen(c))
                 rows.append(self.status_line(c))
                 old = [] if c.stale else c.panel or []
                 body = "".join(r for i, r in enumerate(rows) if i >= len(old) or old[i] != r)
@@ -1362,6 +1431,19 @@ class Brain:
         self.to_keeper(proto.pack(proto.DATA, w.wid, key * WHEEL_LINES))
 
     async def on_mouse(self, c: Client, ev: mouse.Event) -> None:
+        if c.mode == "settings":                  # a click on a row changes it; off: close
+            n = len(settings.ROWS)
+            if ev.wheel and not ev.release:
+                c.settings_idx = min(max(0, c.settings_idx + (1 if ev.button == 1 else -1)), n - 1)
+            elif ev.press:
+                i = ev.y - self.SETTINGS_TOP
+                if 0 <= i < n:
+                    c.settings_idx = i
+                    self.change_setting(c, i)
+                else:
+                    c.mode = None
+            self.schedule_render()
+            return
         if c.mode == "help":
             if ev.wheel:
                 if not ev.release and self.help_pages(c) > 1:
@@ -1449,6 +1531,9 @@ class Brain:
         click on a window's tab
         selects it, a middle-click on it kills that window (as prefix X does for the one
         in front)."""
+        if row == 0 and ev.x < 5 and ev.button == 0:   # " pys ": the settings
+            self.open_settings(c)
+            return
         for b, x in self.status_buttons():
             if row == 0 and x <= ev.x < x + width(b):
                 if ev.button == 0 and b == NEW_TAB:
@@ -1564,6 +1649,8 @@ class Brain:
             self.relayout()
         elif key in ('w', '"'):
             self.open_list(c)
+        elif key == "o":
+            self.open_settings(c)
         elif key == "?":
             c.mode, c.help_page = "help", 0
             self.schedule_render()
@@ -1674,6 +1761,18 @@ class Brain:
                 self.leave_copy(c, w)
             else:
                 self.copy_keys(c, w, data)
+            return
+        if c.mode == "settings":                 # ↑↓ pick, Enter / Space change, q closes
+            n = len(settings.ROWS)
+            if data in UP:
+                c.settings_idx = max(0, c.settings_idx - 1)
+            elif data in DOWN:
+                c.settings_idx = min(n - 1, c.settings_idx + 1)
+            elif data in (b"\r", b"\n", b" "):
+                self.change_setting(c, c.settings_idx)
+            elif data in (b"\x1b", b"q", bytes([c.prefix])):
+                c.mode = None
+            self.schedule_render()
             return
         if c.mode == "help":                     # Space pages; a digit selects; others close
             if data in (b" ", *DOWN) and self.help_pages(c) > 1:

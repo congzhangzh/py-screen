@@ -145,6 +145,7 @@ class Config:
     show_widgets: bool = True     # the status line's right side; prefix S toggles it
     status_lines: int = STATUS_LINES   # at most this many status rows, more only if needed
     buttons: bool = True          # + ▾ ? after " pys " (with the mouse on)
+    origin: dict = field(default_factory=dict)   # panel key → the file that set it
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
     sessions_keep_env: list[str] = field(default_factory=list)   # for pys-sessions only
@@ -194,12 +195,14 @@ def sources() -> list[Path]:
     return ([path()] if path().is_file() else []) + extra
 
 
-def namespace() -> tuple[dict, list[tuple[Path, BaseException]], bool]:
+def namespace(origin: dict | None = None) -> tuple[dict, list[tuple[Path, BaseException]], bool]:
     """Run the config's sources into one namespace: (names, [(file, its error)], usable).
     Each file in config.d sees, and may change, what came before it (WIDGETS.append(…),
     BIND[…] = …). A file that fails is left out (one level of its changes to lists and
     dicts is undone) and named; the others still count. A config.py that fails makes the
-    whole config unusable, as before config.d: the brain then runs on its defaults."""
+    whole config unusable, as before config.d: the brain then runs on its defaults.
+    origin, if given, gets the file that last set each of the settings panel's keys."""
+    from .settings import KEYS as panel_keys
     ns: dict = {"cmd": cmd, "load": load, "clock": clock}
     errors: list[tuple[Path, BaseException]] = []
     main = path()
@@ -213,6 +216,11 @@ def namespace() -> tuple[dict, list[tuple[Path, BaseException]], bool]:
                 return ns, errors, False
             ns.clear()
             ns.update(keep)
+            continue
+        if origin is not None:
+            for k in panel_keys:
+                if k in ns and (k not in keep or ns[k] is not keep[k]):
+                    origin[k] = f.name
     return ns, errors, True
 
 
@@ -220,7 +228,7 @@ def load_config() -> Config:
     cfg = default()
     if not sources():
         return cfg
-    ns, errors, usable = namespace()
+    ns, errors, usable = namespace(cfg.origin)
     for f, e in errors:
         print(f"pys: config {f}: {e!r}", file=sys.stderr)
     if errors:
