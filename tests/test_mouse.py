@@ -196,3 +196,38 @@ def test_outer_tracking_follows_the_window():
     finally:
         t.close()
         sess.kill()
+
+
+def test_list_button_and_close_in_the_list():
+    """▾ after + opens the window list (as prefix "); ✕ at the end of a row asks once
+    ("close? ✕"), a second click closes that window, and the list stays open."""
+    sess = Session("listbtn")
+    t = Term(PYS + ["attach"], sess.env, 100, 20)
+
+    def wids():
+        return [w["wid"] for w in json.loads(sess.pys("ls", "--json"))["windows"]]
+    try:
+        t.wait_for("$ ")
+        sess.pys("new")
+        sess.pys("new")
+        wait(lambda: len(wids()) == 3, what=lambda: t.text())
+        row = t.text().splitlines()[-1]
+        assert row.startswith(" pys  +  ▾ ")
+        click(t, row.index(" ▾ ") + 1, 19)
+        t.wait_for(" Num  Title")
+        victim = wids()[1]
+        y = 1 + wids().index(victim)                  # the list's row of that window
+        assert t.text().splitlines()[y].endswith(" ✕ ")
+        click(t, 98, y)                               # once: it asks
+        t.wait_for("close? ✕")
+        assert victim in wids()
+        click(t, 98, y)                               # twice: it closes, the list stays
+        wait(lambda: victim not in wids(), what=lambda: t.text())
+        assert " Num  Title" in t.text()
+        click(t, 50, 5)                               # a click off the rows cancels nothing
+        click(t, 10, 1)                               # a click on a row selects it
+        wait(lambda: " Num  Title" not in t.text(), what=lambda: t.text())
+        assert json.loads(sess.pys("ls", "--json"))["current"] == wids()[0]
+    finally:
+        t.close()
+        sess.kill()

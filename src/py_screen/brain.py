@@ -103,11 +103,19 @@ NO_PREFIX = [
     ("F2", "window list"),
     ("Shift-PgUp / PgDn", "scroll back / forward; any key goes back to live"),
 ]
-NEW_TAB = " + "          # the status line's new-window button, after " pys "
+# The status line's buttons after " pys " (shown while the mouse is on): a new window, the
+# window list. And the window list's close button at the end of each row, which asks once
+# ("close? ✕") before it closes. Each glyph is one cell wide in every terminal: Neutral in
+# East Asian Width (☰ is Wide, × and ≡ Ambiguous: two cells in a CJK locale).
+NEW_TAB = " + "
+LIST_TAB = " ▾ "
+CLOSE = " ✕ "
+CLOSE_ASK = " close? ✕ "
 MOUSE_HELP = [
     ("click", "focus a pane; mouse apps get the click too"),
     ("click a window in the status line", "select it; a middle-click kills it"),
     ("click + in the status line", "a new window, in the folder of the one in front"),
+    ("click ▾ in the status line", "the window list; ✕ on a row, twice, closes it"),
     ("drag a border", "resize: a │ separator or a caption line"),
     ("wheel, touch drag", "scroll back the pane under it; arrows for vim, less"),
     ("Shift+drag", "your terminal selects; copy with its key, not C-c"),
@@ -227,6 +235,7 @@ class Client:
     armed: bool = False           # the prefix was typed
     mode: str | None = None       # None | "list" | "rename" | "resize"
     list_idx: int = 0
+    list_close: int | None = None  # the window whose ✕ in the list was clicked once
     buf: str = ""
     grab: Pane | None = None      # the pane that got a press: its drag and release follow
     drag: tuple[Split, int] | None = None   # a border being dragged
@@ -819,13 +828,17 @@ class Brain:
         changed, self.status_h = h != self.status_h, h
         return changed
 
+    def status_buttons(self) -> list[tuple[str, int]]:
+        """The buttons after " pys ": (label, start column). Only while the mouse is on: a
+        button you can't click would only take room."""
+        return [(NEW_TAB, 5), (LIST_TAB, 5 + width(NEW_TAB))] if self.cfg.mouse else []
+
     def status_left(self) -> tuple[str, int]:
-        """What starts the status line: " pys " and, with the mouse on, the " + " button that
-        opens a new window (a + you can't click would only take room); and its width, where
-        the window tabs start."""
-        if not self.cfg.mouse:
-            return "\x1b[0;30;46m pys \x1b[0m", 5
-        return "\x1b[0;30;46m pys \x1b[0;1;36m + \x1b[0m", 5 + width(NEW_TAB)
+        """What starts the status line: " pys " and its buttons; and its width, where the
+        window tabs start."""
+        bs = self.status_buttons()
+        text = "\x1b[0;30;46m pys " + "".join(f"\x1b[0;1;36m{b}" for b, _ in bs) + "\x1b[0m"
+        return text, 5 + sum(width(b) for b, _ in bs)
 
     def status_right(self, cols: int | None = None) -> tuple[list[str], int]:
         """The widgets, cut to fit: they get at most two thirds of the line after " pys + ",
@@ -901,20 +914,31 @@ class Brain:
             x += width(label)
         return out, full
 
+    def list_close_label(self, c: Client, wid: int) -> str:
+        """The close button at the end of wid's row in the window list ("" with the mouse
+        off): ✕, or "close? ✕" after one click on it, so a slip can't kill a window."""
+        if not self.cfg.mouse:
+            return ""
+        return CLOSE_ASK if c.list_close == wid else CLOSE
+
     def window_list(self, c: Client) -> list[str]:
         area = c.rows - self.status_h
+        c.list_idx = max(0, min(c.list_idx, len(self.order) - 1))   # a window may have gone
         rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
             w = self.wins[wid]
             mark = "!" if w.attn else " "
-            rows.append((i, fit(f" {wid:>3}{mark} {fit(w.name, 24)} {cfgmod.home_path(w.cwd())}",
-                                c.cols)))
+            btn = self.list_close_label(c, wid)
+            text = fit(f" {wid:>3}{mark} {fit(w.name, 24)} {cfgmod.home_path(w.cwd())}",
+                       max(0, c.cols - width(btn)))
+            rows.append((i, text, btn))
         out = [f"\x1b[1;1H\x1b[0;30;46m{rows[0]}\x1b[0m"]
-        for y, (i, text) in enumerate(rows[1:area], start=1):
+        for y, (i, text, btn) in enumerate(rows[1:area], start=1):
             attn = self.wins[self.order[i]].attn
             attr = ("\x1b[0;30;43m" if i == c.list_idx else
                     ATTN_COLORS.get(attn, "\x1b[0m") if attn else "\x1b[0m")
-            out.append(f"\x1b[{y + 1};1H{attr}{text}\x1b[0m")
+            battr = "\x1b[0;97;41m" if btn == CLOSE_ASK else "\x1b[0;1;31m"
+            out.append(f"\x1b[{y + 1};1H{attr}{text}{battr}{btn}\x1b[0m")
         for y in range(len(rows), area):
             out.append(f"\x1b[{y + 1};1H\x1b[0m{' ' * c.cols}")
         return out
@@ -1341,8 +1365,20 @@ class Brain:
                 d = -1 if ev.button == 0 else 1
                 c.list_idx = min(max(0, c.list_idx + d), len(self.order) - 1)
             elif ev.press and 1 <= ev.y <= len(self.order):
-                c.mode = None
-                self.select(self.order[ev.y - 1])
+                wid = self.order[ev.y - 1]
+                btn = self.list_close_label(c, wid)
+                if btn and ev.x >= c.cols - width(btn):   # its ✕: ask once, then close it
+                    if c.list_close == wid:
+                        log(f"✕ in the window list: kill window {wid}")
+                        self.to_keeper(proto.pack_ctl({"op": "kill", "wid": wid}))
+                        c.list_close = None
+                    else:
+                        c.list_close = wid
+                else:
+                    c.mode, c.list_close = None, None
+                    self.select(wid)
+            elif ev.press:
+                c.list_close = None
             self.schedule_render()
             return
         if c.mode == "copy":                      # the wheel moves copy mode's cursor
@@ -1382,7 +1418,7 @@ class Brain:
         if not ev.press:
             return
         if ev.y >= top:                           # the status line
-            await self.status_click(ev, ev.y - top)
+            await self.status_click(c, ev, ev.y - top)
             return
         if p is not None:
             self.focus_pane(p)
@@ -1393,16 +1429,19 @@ class Brain:
         if ev.button == 0 and (b := self.layout.boundary_at(ev.x, ev.y)):
             c.drag = b
 
-    async def status_click(self, ev: mouse.Event, row: int) -> None:
-        """A press on the status line, as a tab bar works in a GUI: the + opens a new
-        window (as prefix c does), a click on a window's tab selects it, a middle-click on
-        it kills that window (as prefix X does for the one in front)."""
-        x0 = self.status_left()[1]
-        if self.cfg.mouse and row == 0 and x0 - width(NEW_TAB) <= ev.x < x0:
-            if ev.button == 0:
-                w = await self.new_window_here()
-                self.select(w.wid)
-            return
+    async def status_click(self, c: Client, ev: mouse.Event, row: int) -> None:
+        """A press on the status line, as a tab bar works in a GUI: + opens a new window
+        (as prefix c does), ▾ the window list (as prefix "), a click on a window's tab
+        selects it, a middle-click on it kills that window (as prefix X does for the one
+        in front)."""
+        for b, x in self.status_buttons():
+            if row == 0 and x <= ev.x < x + width(b):
+                if ev.button == 0 and b == NEW_TAB:
+                    w = await self.new_window_here()
+                    self.select(w.wid)
+                elif ev.button == 0 and b == LIST_TAB:
+                    self.open_list(c)
+                return
         for wid, label, x, r in self.status_tabs(self.status_right()[1], None, self.status_h)[0]:
             if r == row and x <= ev.x < x + width(label):
                 if ev.button == 1:
@@ -1545,7 +1584,7 @@ class Brain:
             self.quit(0)
 
     def open_list(self, c: Client) -> None:
-        c.mode = "list"
+        c.mode, c.list_close = "list", None
         c.list_idx = self.order.index(self.current) if self.current in self.order else 0
         self.schedule_render()
 
@@ -1628,6 +1667,7 @@ class Brain:
                 if len(data) == 1 and chr(data[0]).isdigit():
                     self.select(data[0] - 0x30)
         elif c.mode == "list":
+            c.list_close = None                   # a key cancels a "close? ✕"
             if data in UP:
                 c.list_idx = max(0, c.list_idx - 1)
             elif data in DOWN:

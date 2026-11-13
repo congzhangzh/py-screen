@@ -69,7 +69,7 @@ def test_one_status_row_when_the_config_says_so(tmp_path):
         t.wait_for("$ ")
         while len(ls(sess)["windows"]) < 9:
             sess.pys("new")
-        t.wait_for(" 4 sh")
+        t.wait_for(" 3 sh")                                   # the last tab one row holds
         time.sleep(0.5)                                        # the frames after the last new
         assert pane_h(sess) == ROWS - 1                        # one row: tabs are left out
         assert " 8 " not in t.text().splitlines()[-1]
