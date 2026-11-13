@@ -1,6 +1,6 @@
 ---
 name: pys-drive
-description: Work inside py-screen (pys), the terminal multiplexer, as an agent - name your own window so the user sees what it is for, find which window runs which Claude Code session (`pys-agents`), read another window's screen, type into one without breaking what the user or another agent is doing, and test pys itself on a second server so the user's live session is never touched. Use when you run in a pys window ($PYS_WINDOW is set), when asked to look at, name, watch or type into a pys window, or to check on other agent sessions.
+description: Work inside py-screen (pys), the terminal multiplexer, as an agent - name your own window so the user sees what it is for, mark it red when only the user can decide what comes next (`pys attn ask`), find which window runs which Claude Code session (`pys-agents`), read another window's screen, type into one without breaking what the user or another agent is doing, and test pys itself on a second server so the user's live session is never touched. Use when you run in a pys window ($PYS_WINDOW is set), when asked to look at, name, watch or type into a pys window, or to check on other agent sessions.
 ---
 
 # pys-drive: an agent's manners in a pys session
@@ -21,6 +21,22 @@ and start time). `--owner $PPID` does the same on Linux and macOS, where `$PPID`
 Code's Bash tool is `claude`; in Windows' Git Bash it is not, `--agent` is right everywhere. Keep it short, about
 24 characters: the status line shows every window's whole title. Set it again when the work
 changes. A title the user set by hand (prefix `,`) wins over yours; leave it alone.
+
+## Ask for the user's decision with a red tab
+
+When your turn ends on something only the user can decide (a go to push or release, a
+choice between designs, a question), mark your window **ask** before the turn ends:
+
+```bash
+pys attn ask --why "go for release 20261113.1?"    # short: the why shows in `pys attn`
+```
+
+Its tab turns red: "it can't go on without you". Without it, the Claude Code Stop hook marks
+the window green **done** ("it finished and waits"), which tells the user nothing is needed.
+A done never replaces an ask, so the red stays until the user switches to your window or
+types the next prompt there. Mark ask only for a real decision, not for a report: a red tab
+that needs nothing teaches the user to ignore red. There is no title state for it: the title
+ends in `busy` or `free`, and the mark is what asks.
 
 ## See what runs where
 

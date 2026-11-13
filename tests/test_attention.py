@@ -130,6 +130,43 @@ def test_marks_on_the_status_line() -> None:
         sess.kill()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the pty harness is POSIX-only")
+def test_an_ask_outlives_the_stop_hook() -> None:
+    """An agent that ends its turn on a question marks itself ask; the Stop hook's done
+    right after must not turn it green. The next prompt clears it; a done alone still marks."""
+    from harness import PYS, Session, Term
+    sess = Session("attnask", shell="/bin/sh")
+    t = Term(PYS + ["attach"], sess.env)
+    try:
+        t.wait_for("$ ")
+        other = json.loads(sess.pys("new"))["wid"]
+
+        def mark(wid):
+            return next(w for w in json.loads(sess.pys("ls", "--json"))["windows"]
+                        if w["wid"] == wid)["attn"]
+
+        env = dict(sess.env, PYS_WINDOW=str(other), PYS_SESSION=str(sess.dir))
+        hook = [sys.executable, "-m", "py_screen.agents.attn"]
+
+        def event(name):
+            subprocess.run(hook, env=env, input=json.dumps({"hook_event_name": name}),
+                           text=True, timeout=15, check=True)
+
+        sess.pys("attn", "ask", "--wid", str(other), "--why", "go for the release?")
+        event("Stop")
+        assert mark(other) == "ask"
+        assert sess.pys("attn", "--wid", str(other)).strip() == "ask: go for the release?"
+        event("UserPromptSubmit")                     # the user answered: cleared
+        assert mark(other) is None
+        event("Stop")                                 # a turn that asks nothing: green
+        assert mark(other) == "done"
+        sess.pys("attn", "ask", "--wid", str(other))  # an ask still outranks a done
+        assert mark(other) == "ask"
+    finally:
+        t.close()
+        sess.kill()
+
+
 def test_the_hook_outside_pys_does_nothing() -> None:
     env = {k: v for k, v in __import__("os").environ.items()
            if k not in ("PYS_WINDOW", "PYS_SESSION")}

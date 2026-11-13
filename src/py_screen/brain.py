@@ -502,6 +502,11 @@ class Brain:
         so you see it already. Returns whether w is marked now."""
         if level is not None and w.wid == self.current and self.clients:
             level = None
+        if level == "done" and w.attn == "ask":
+            # A request outranks a finish: an agent that ends its turn on a question marks
+            # itself ask (`pys attn ask`), and its Stop hook's done right after must not
+            # turn that red to green. Only you seeing it, or your next prompt, clears it.
+            return True
         if (w.attn, w.attn_why) != (level, why if level else ""):
             w.attn, w.attn_why = level, why if level else ""
             w.attn_at = time.time() if level else 0.0

@@ -98,7 +98,9 @@ green, **done**: it finished and waits. Its app marks it ask by itself with a be
 or a notification (OSC 9, as iTerm2 takes it; OSC 777;notify, as urxvt, VTE and Ghostty
 do; OSC 9 followed by a number is ConEmu's progress bar or folder, so it isn't one); a
 program or a hook marks it with `pys attn`. Switching to the window clears the mark (you
-saw it), and the window in front of you is never marked. Prefix `!` goes to the next
+saw it), and the window in front of you is never marked. A done never replaces an ask: an
+agent that ends its turn on a question marks itself `pys attn ask --why "…"`, and its
+Stop hook's done right after leaves the red in place until you look or answer. Prefix `!` goes to the next
 marked window, ask ones first. A marked window whose whole tab doesn't fit on the status
 line still shows, as a short `7!`; the window list marks it too. `pys ls --json` gives
 `attn`, `attn_why` and `attn_at` per window. For Claude Code, `pys setup` adds the hooks
