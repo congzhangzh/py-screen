@@ -221,7 +221,9 @@ uses**: your config and its drop-ins, the skills linked into Claude Code and whe
 the pys hooks in Claude Code's `settings.json`, this pys's code and the Python that runs it;
 `✓` there, `⚠` another install's, `✗` missing (`pys setup` adds it). The title bar of the
 settings and of the help says which pys this is, `20261113.3 · 1a2b3c4` (a checkout says
-`dev` and its commit), and who made it: *many windows, one Brahman*.
+`dev` and its commit), and who made it: *many windows, one Brahman*. The same motto sits dim
+in the status line's blank space between the tabs and the widgets, only when it fits whole;
+the tabs take that room first (`SLOGAN = False`, or the panel, turns it off).
 
 ### Config
 
@@ -269,6 +271,7 @@ MOUSE = True                      # False: plain drags select text in the termin
 SCROLLBACK = 5000                 # rows of history per window; 0 = none
 STATUS_LINES = 2                  # rows the window tabs may take; 1 = one row, as before
 BUTTONS = True                    # + ▾ ? after " pys "; False gives their room to the tabs
+SLOGAN = True                     # the motto, dim, in the status line's blank space
 ```
 
 **The status line grows a row when the tabs don't fit** (up to `STATUS_LINES`, 2 by

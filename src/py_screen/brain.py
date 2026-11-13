@@ -797,11 +797,22 @@ class Brain:
             if i == h - 1 and msg is not None:
                 out.append(row + msg)
             elif i == h - 1:
-                gap = " " * max(0, cols - used[i] - right_w)
-                out.append(row + lines[i] + gap + "".join(right_parts) + "\x1b[0m")
+                out.append(row + lines[i] + self.status_gap(cols - used[i] - right_w)
+                           + "".join(right_parts) + "\x1b[0m")
             else:
                 out.append(row + lines[i] + "\x1b[0m" + " " * max(0, cols - used[i]))
         return "".join(out)
+
+    def status_gap(self, n: int) -> str:
+        """The blank between the tabs and the widgets, n cells: the motto, dim and centred,
+        when it fits whole with room to spare (SLOGAN, on by default); else blank. It only
+        fills what is empty: the tabs and the widgets are placed before it is."""
+        n = max(0, n)
+        text = about.MOTTO
+        if not self.cfg.slogan or n < width(text) + 6:
+            return " " * n
+        left = (n - width(text)) // 2
+        return " " * left + "\x1b[0;90m" + text + "\x1b[0m" + " " * (n - left - width(text))
 
     def status_message(self, c: Client | None, cols: int) -> str | None:
         """What a mode shows in place of the last row's tabs and widgets, if one is on."""

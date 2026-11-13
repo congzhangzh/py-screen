@@ -4,6 +4,7 @@ is kept in config.d/50-settings.py, which the next brain reads like any drop-in.
 from __future__ import annotations
 
 import json
+import re
 import sys
 
 import pytest
@@ -62,7 +63,7 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         t.wait_for(" py-screen settings")
         assert "from config.py" in t.text()               # STATUS_LINES' row says where
         assert " Files pys uses" in t.text() and "✓ config" in t.text()
-        assert "dev · " in t.text().splitlines()[0]      # the version, right of the title
+        assert re.search(r"(dev|\d{8}\.\d+) · [0-9a-f]{7}", t.text().splitlines()[0])  # version
         assert "this pys's code" in t.text()
         t.send(b"\r")                                     # row 1: the buttons, off
         wait(lambda: kept.exists() and "BUTTONS = False" in kept.read_text(),
@@ -87,3 +88,25 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
     finally:
         t.close()
         sess.kill()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the pty harness is POSIX-only")
+@pytest.mark.parametrize("on", [True, False])
+def test_the_motto_in_the_blank(tmp_path, on):
+    """The motto sits in the status line's blank space when it fits; SLOGAN = False, none.
+    The tabs take the room first: a narrow terminal shows no motto."""
+    from harness import PYS, Session, Term
+    from py_screen.about import MOTTO
+    cfg = tmp_path / "config.py"
+    cfg.write_text(f"SLOGAN = {on}\n")
+    for cols, want in ((100, on), (40, False)):
+        sess = Session("motto")
+        sess.env["PYS_CONFIG"] = str(cfg)
+        t = Term(PYS + ["attach"], sess.env, cols, 12)
+        try:
+            t.wait_for("$ ")
+            t.wait_for(" 0* sh")
+            assert (MOTTO in t.text().splitlines()[-1]) is want, (cols, t.text().splitlines()[-1])
+        finally:
+            t.close()
+            sess.kill()

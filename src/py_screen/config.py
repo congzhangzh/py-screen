@@ -20,6 +20,7 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
                                               # Shift-PgUp scroll it); 0 = none
     BUTTONS = True                            # + ▾ ? after " pys "; False: the room
                                               # goes to the window tabs
+    SLOGAN = True                             # the motto in the status line's blank space
     STATUS_LINES = 2                          # the window tabs wrap onto up to this many
                                               # status rows, only while one doesn't hold them
     ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # run after windows change and
@@ -145,6 +146,7 @@ class Config:
     show_widgets: bool = True     # the status line's right side; prefix S toggles it
     status_lines: int = STATUS_LINES   # at most this many status rows, more only if needed
     buttons: bool = True          # + ▾ ? after " pys " (with the mouse on)
+    slogan: bool = True           # the motto, dim, in the status line's blank space
     origin: dict = field(default_factory=dict)   # panel key → the file that set it
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
@@ -243,6 +245,7 @@ def load_config() -> Config:
     cfg.mouse = bool(ns.get("MOUSE", True))
     cfg.show_widgets = bool(ns.get("SHOW_WIDGETS", True))
     cfg.buttons = bool(ns.get("BUTTONS", True))
+    cfg.slogan = bool(ns.get("SLOGAN", True))
     try:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):

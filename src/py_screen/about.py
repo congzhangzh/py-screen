@@ -15,7 +15,8 @@ import importlib.metadata
 import subprocess
 from pathlib import Path
 
-SLOGAN = "many windows, one Brahman · by CZ, an engineer near the magnet"
+MOTTO = "many windows, one Brahman"
+SLOGAN = f"{MOTTO} · by CZ, an engineer near the magnet"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -29,14 +30,16 @@ def _git(repo: Path, *args: str) -> str:
 
 @functools.cache
 def version() -> str:
-    """`20261113.3 · 1a2b3c4` for a release; `dev · 1a2b3c4` (+ `, changed` when the
-    checkout has uncommitted changes) from a checkout; `dev` when even git can't say."""
+    """`20261113.3 · 1a2b3c4` for a release, or a clean checkout of its tag; `dev · 1a2b3c4`
+    from any other checkout (+ `, changed` when it has uncommitted changes, never with a
+    release's name); `dev` when even git can't say."""
     repo = Path(__file__).resolve().parents[2]
     if (repo / ".git").exists():                  # a checkout: a dir, or a worktree's file
         sha = _git(repo, "rev-parse", "--short=7", "HEAD")
         if sha:
-            tag = _git(repo, "describe", "--tags", "--exact-match", "HEAD")
             dirty = bool(_git(repo, "status", "--porcelain", "--untracked-files=no"))
+            # a release's name only for its exact, unchanged code: edits on a tag are dev
+            tag = "" if dirty else _git(repo, "describe", "--tags", "--exact-match", "HEAD")
             return f"{tag or 'dev'} · {sha}" + (", changed" if dirty else "")
         return "dev"
     try:
