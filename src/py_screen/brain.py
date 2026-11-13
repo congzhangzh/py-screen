@@ -104,11 +104,12 @@ NO_PREFIX = [
     ("Shift-PgUp / PgDn", "scroll back / forward; any key goes back to live"),
 ]
 # The status line's buttons after " pys " (shown while the mouse is on): a new window, the
-# window list. And the window list's close button at the end of each row, which asks once
+# window list, the help. And the window list's close button at the end of each row, which asks once
 # ("close? ✕") before it closes. Each glyph is one cell wide in every terminal: Neutral in
 # East Asian Width (☰ is Wide, × and ≡ Ambiguous: two cells in a CJK locale).
 NEW_TAB = " + "
 LIST_TAB = " ▾ "
+HELP_TAB = " ? "
 CLOSE = " ✕ "
 CLOSE_ASK = " close? ✕ "
 MOUSE_HELP = [
@@ -116,6 +117,7 @@ MOUSE_HELP = [
     ("click a window in the status line", "select it; a middle-click kills it"),
     ("click + in the status line", "a new window, in the folder of the one in front"),
     ("click ▾ in the status line", "the window list; ✕ on a row, twice, closes it"),
+    ("click ? in the status line", "this help"),
     ("drag a border", "resize: a │ separator or a caption line"),
     ("wheel, touch drag", "scroll back the pane under it; arrows for vim, less"),
     ("Shift+drag", "your terminal selects; copy with its key, not C-c"),
@@ -834,9 +836,16 @@ class Brain:
         return changed
 
     def status_buttons(self) -> list[tuple[str, int]]:
-        """The buttons after " pys ": (label, start column). Only while the mouse is on: a
-        button you can't click would only take room."""
-        return [(NEW_TAB, 5), (LIST_TAB, 5 + width(NEW_TAB))] if self.cfg.mouse else []
+        """The buttons after " pys ": (label, start column). Only while the mouse is on (a
+        button you can't click would only take room) and BUTTONS is not False (you know
+        the keys and want the room for the tabs)."""
+        if not (self.cfg.mouse and self.cfg.buttons):
+            return []
+        out, x = [], 5
+        for b in (NEW_TAB, LIST_TAB, HELP_TAB):
+            out.append((b, x))
+            x += width(b)
+        return out
 
     def status_left(self) -> tuple[str, int]:
         """What starts the status line: " pys " and its buttons; and its width, where the
@@ -1436,7 +1445,8 @@ class Brain:
 
     async def status_click(self, c: Client, ev: mouse.Event, row: int) -> None:
         """A press on the status line, as a tab bar works in a GUI: + opens a new window
-        (as prefix c does), ▾ the window list (as prefix "), a click on a window's tab
+        (as prefix c does), ▾ the window list (as prefix "), ? the help (as prefix ?), a
+        click on a window's tab
         selects it, a middle-click on it kills that window (as prefix X does for the one
         in front)."""
         for b, x in self.status_buttons():
@@ -1446,6 +1456,9 @@ class Brain:
                     self.select(w.wid)
                 elif ev.button == 0 and b == LIST_TAB:
                     self.open_list(c)
+                elif ev.button == 0 and b == HELP_TAB:
+                    c.mode, c.help_page = "help", 0
+                    self.schedule_render()
                 return
         for wid, label, x, r in self.status_tabs(self.status_right()[1], None, self.status_h)[0]:
             if r == row and x <= ev.x < x + width(label):

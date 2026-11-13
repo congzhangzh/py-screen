@@ -144,6 +144,7 @@ On by default, like tmux's `mouse on`:
 | middle-click a window in the status line | kill it (as prefix `X` does for the one in front), as a browser closes a tab |
 | click the `+` after ` pys ` | open a new window in the folder of the one in front (as prefix `c`); shown only while the mouse is on |
 | click the `▾` after the `+` | the window list (as prefix `"`); a `✕` ends each row: click it once and it asks `close? ✕`, click again and that window closes, the list stays open; any other click or key cancels |
+| click the `?` after the `▾` | this help (as prefix `?`): every key, your bindings, the mouse; a click on a window in it selects that window |
 | drag a `│` separator or a caption line | resize the panes on both sides |
 | wheel, touch drag | goes to the pane under the pointer, focused or not: an app that asked for the mouse gets it; a full-screen app that didn't (less, man) gets arrow keys; anything else (a shell, Claude Code) scrolls back through its history (see Scrollback) |
 | Shift+drag | select text in your terminal (most terminals; the mouse is pys's otherwise) |
@@ -252,10 +253,11 @@ BIND = {"T": ("top", ["htop"])}   # C-a T opens a window running htop
 MOUSE = True                      # False: plain drags select text in the terminal
 SCROLLBACK = 5000                 # rows of history per window; 0 = none
 STATUS_LINES = 2                  # rows the window tabs may take; 1 = one row, as before
+BUTTONS = True                    # + ▾ ? after " pys "; False gives their room to the tabs
 ```
 
 **The status line grows a row when the tabs don't fit** (up to `STATUS_LINES`, 2 by
-default). The tabs flow like text from its first row, after ` pys + ▾ `; the widgets stay at
+default). The tabs flow like text from its first row, after ` pys + ▾ ? `; the widgets stay at
 the right of its last row, with the budget they always have (two thirds of a row at most).
 It takes a row as soon as a tab would be left out, and gives it back only when a window
 opens or ends or the terminal is resized, never because a title or a widget got shorter:
@@ -266,8 +268,8 @@ short, ` 7! `), and the window list (`F2`) has them all.
 
 ```
  0 sh  ~/projects/py-screen
- pys  +  ▾  0* sh  1 sh  2 sh  3 sh  4 sh  5 sh  6 sh  7 sh
- 8 sh  9 sh                               3.16  11-11 19:19
+ pys  +  ▾  ?  0* sh  1 sh  2 sh  3 sh  4 sh  5 sh  6 sh
+ 7 sh  8 sh  9 sh                         3.16  11-11 19:19
 ```
 
 `pys sample-config` prints a fuller sample to start from (`pys sample-config >

@@ -231,3 +231,42 @@ def test_list_button_and_close_in_the_list():
     finally:
         t.close()
         sess.kill()
+
+
+def test_help_button():
+    """? after ▾ opens the help (as prefix ?); a key closes it."""
+    sess = Session("helpbtn")
+    t = Term(PYS + ["attach"], sess.env, 100, 20)
+    try:
+        t.wait_for("$ ")
+        row = t.text().splitlines()[-1]
+        assert row.startswith(" pys  +  ▾  ?  ")
+        click(t, row.index(" ? ") + 1, 19)
+        t.wait_for(" py-screen help")
+        t.send("q")
+        wait(lambda: " py-screen help" not in t.text(), what=lambda: t.text())
+    finally:
+        t.close()
+        sess.kill()
+
+
+def test_no_buttons_when_the_config_says_so(tmp_path):
+    """BUTTONS = False: no + ▾ ? after " pys ", the tabs start right after it and a click
+    on one still selects it."""
+    cfg = tmp_path / "config.py"
+    cfg.write_text("BUTTONS = False\n")
+    sess = Session("nobtn")
+    sess.env["PYS_CONFIG"] = str(cfg)
+    t = Term(PYS + ["attach"], sess.env, 100, 20)
+    try:
+        t.wait_for("$ ")
+        other = json.loads(sess.pys("new"))["wid"]
+        t.wait_for(f" {other} sh")
+        row = t.text().splitlines()[-1]
+        assert row.startswith(" pys  0* sh ") and " ▾ " not in row and " + " not in row
+        click(t, row.index(f" {other} sh") + 1, 19)
+        wait(lambda: json.loads(sess.pys("ls", "--json"))["current"] == other,
+             what=lambda: t.text())
+    finally:
+        t.close()
+        sess.kill()

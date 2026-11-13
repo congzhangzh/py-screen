@@ -18,6 +18,8 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
                                               # select text in the terminal again
     SCROLLBACK = 5000                         # rows of history per window (the wheel and
                                               # Shift-PgUp scroll it); 0 = none
+    BUTTONS = True                            # + ▾ ? after " pys "; False: the room
+                                              # goes to the window tabs
     STATUS_LINES = 2                          # the window tabs wrap onto up to this many
                                               # status rows, only while one doesn't hold them
     ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # run after windows change and
@@ -142,6 +144,7 @@ class Config:
     scrollback: int = SCROLLBACK
     show_widgets: bool = True     # the status line's right side; prefix S toggles it
     status_lines: int = STATUS_LINES   # at most this many status rows, more only if needed
+    buttons: bool = True          # + ▾ ? after " pys " (with the mouse on)
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
     sessions_keep_env: list[str] = field(default_factory=list)   # for pys-sessions only
@@ -231,6 +234,7 @@ def load_config() -> Config:
     cfg.prefix = ns.get("PREFIX")
     cfg.mouse = bool(ns.get("MOUSE", True))
     cfg.show_widgets = bool(ns.get("SHOW_WIDGETS", True))
+    cfg.buttons = bool(ns.get("BUTTONS", True))
     try:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):
