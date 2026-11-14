@@ -2,7 +2,8 @@
 
 Geometry: a vertical split puts children side by side with a one-column separator
 between them; a horizontal split stacks them. Every pane ends with a caption line
-(window number and title), which also separates stacked panes.
+(window number and title), which also separates stacked panes; only a lone pane may go
+without (bare: CAPTIONS off), its text taking that row too.
 """
 
 from __future__ import annotations
@@ -19,10 +20,11 @@ class Pane:
     y: int = 0
     w: int = 0
     h: int = 0
+    bare: bool = False                   # no caption line (CAPTIONS off, a lone pane)
 
     @property
     def text_h(self) -> int:
-        return max(1, self.h - 1)
+        return self.h if self.bare else max(1, self.h - 1)
 
 
 @dataclass(eq=False)

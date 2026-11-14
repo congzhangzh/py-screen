@@ -21,6 +21,8 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
     BUTTONS = True                            # + ▾ ? after " pys "; False: the room
                                               # goes to the window tabs
     SLOGAN = True                             # the motto in the status line's blank space
+    CAPTIONS = True                           # the caption line under a window; False: none
+                                              # while it fills the screen (a split keeps them)
     GROUPS = True                             # product groups (pys group) on lines of their
                                               # own; False: one flow of tabs, as without them
     STATUS_LINES = 2                          # the window tabs wrap onto up to this many
@@ -150,6 +152,7 @@ class Config:
     buttons: bool = True          # + ▾ ? after " pys " (with the mouse on)
     slogan: bool = True           # the motto, dim, in the status line's blank space
     groups: bool = True           # product lines on the status line; False: the plain flow
+    captions: bool = True         # a lone pane's caption line; False: its text takes the row
     origin: dict = field(default_factory=dict)   # panel key → the file that set it
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
@@ -250,6 +253,7 @@ def load_config() -> Config:
     cfg.buttons = bool(ns.get("BUTTONS", True))
     cfg.slogan = bool(ns.get("SLOGAN", True))
     cfg.groups = bool(ns.get("GROUPS", True))
+    cfg.captions = bool(ns.get("CAPTIONS", True))
     try:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):

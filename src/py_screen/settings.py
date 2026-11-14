@@ -28,6 +28,8 @@ ROWS: list[tuple[str, str, str, tuple]] = [
     ("SLOGAN", "slogan", "the motto and its maker in the status line's blank",
      (True, False)),
     ("GROUPS", "groups", "product groups on lines of their own", (True, False)),
+    ("CAPTIONS", "captions", "the caption line under a window (kept in a split)",
+     (True, False)),
 ]
 KEYS = [r[0] for r in ROWS]
 

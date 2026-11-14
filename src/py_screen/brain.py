@@ -608,7 +608,11 @@ class Brain:
         attention mark goes when you get to it."""
         self.saw_focused()
         self.layout.place(self.cols, self.rows - self.status_h)
-        for p in self.layout.panes():
+        panes = self.layout.panes()
+        bare = not self.cfg.captions and len(panes) == 1   # a split keeps them: they part
+        for p in panes:                           # stacked panes and show the focus
+            p.bare = bare
+        for p in panes:
             w = self.wins.get(p.wid) if p.wid is not None else None
             if w and (w.term.columns, w.term.lines) != (p.w, p.text_h):
                 w.term.resize(p.text_h, p.w)
@@ -746,6 +750,8 @@ class Brain:
         return p.x < vc and p.y + y < vr - self.status_h
 
     def caption(self, p: Pane, vc: int | None = None) -> str:
+        if p.bare:                                # CAPTIONS off: the text has the row
+            return ""
         w = self.wins.get(p.wid) if p.wid is not None else None
         label = f" {p.wid} {w.name} " if w else " (empty) "
         if w and w.copy:

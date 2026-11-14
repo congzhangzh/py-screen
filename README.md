@@ -246,7 +246,8 @@ windows of your own group with their roles (the first word of a title before a `
 
 Prefix `o`, or a click on ` pys `, opens the settings: the buttons (`BUTTONS`), the status
 rows the tabs may take (`STATUS_LINES`), the widgets (`SHOW_WIDGETS`), the mouse
-(`MOUSE`), the motto (`SLOGAN`) and the product lines (`GROUPS`), each with its value and where it comes from (default, config.py, set here). A
+(`MOUSE`), the motto (`SLOGAN`), the product lines (`GROUPS`) and the caption line under a
+window (`CAPTIONS`), each with its value and where it comes from (default, config.py, set here). A
 click or Enter on a row changes it at once (the next value, round to the first); the status
 rows, 1 to 5, are a stepper, `− 2 +`: a click on `−` or `+`, `←` `→`, `-` `+` or a digit sets them
 (more than 5 in `config.py`, if you want). It keeps what you set in
@@ -310,6 +311,8 @@ STATUS_LINES = 2                  # rows the window tabs may take; 1 = one row, 
 BUTTONS = True                    # + ▾ ? after " pys "; False gives their room to the tabs
 SLOGAN = True                     # the motto, dim, in the status line's blank space
 GROUPS = True                     # product groups on lines of their own; False: the plain flow
+CAPTIONS = True                   # the caption line under a window; False: none while it fills
+                                  # the screen (its text takes the row), a split keeps them
 ```
 
 **The status line grows a row when the tabs don't fit** (up to `STATUS_LINES`, 2 by
