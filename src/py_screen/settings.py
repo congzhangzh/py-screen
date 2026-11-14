@@ -25,7 +25,9 @@ ROWS: list[tuple[str, str, str, tuple]] = [
     ("SHOW_WIDGETS", "show_widgets", "the widgets on the right of the status line",
      (True, False)),
     ("MOUSE", "mouse", "the mouse: clicks, drags, the wheel", (True, False)),
-    ("SLOGAN", "slogan", "the motto in the status line's blank space", (True, False)),
+    ("SLOGAN", "slogan", "the motto and its maker in the status line's blank",
+     (True, False)),
+    ("GROUPS", "groups", "product groups on lines of their own", (True, False)),
 ]
 KEYS = [r[0] for r in ROWS]
 

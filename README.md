@@ -218,16 +218,23 @@ its product's group, from inside it, or `pys group --wid 7 product-a` from anywh
 a window out. The group is the window's, kept across a reload and by `pys-sessions`.
 
 The status line shows the groups together. While one row holds every tab, that row has
-each group led by its name; when it doesn't, each product gets its own line, more rows of
-its own when its tabs need them (indented under its name), and pys's own row comes last
-with the buttons, the windows in no group and the widgets:
+each group led by its name, and the windows in no group led by `others`; when it doesn't,
+each product gets its own line, more rows of its own when its tabs need them (indented
+under its name), then a line `others` for the windows in no group, and pys's own row comes
+last, with no window on it: the buttons, the motto and its maker, the widgets:
 
 ```
- product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy   3 dbg-product-a-g1 busy  4 comp-server-g4 free  5 edu-product-a-g1 free
+ product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy  3 dbg-product-a-g1 busy  4 comp-server-g4 free  5 edu-product-a-g1 free
             6 po-product-a-g3 #374 free  7 rev-review-g3 free  8 comp-client-g1 #374 busy
  product-b  2 po-product-b-g8 free  9 comp-sync-g1 free
- pys  +  ▾  ?  10 po-pys-g1 groups busy                  many agent teams, one Brahman                  15.81  11-14 03:52
+ others     10 po-pys-g1 groups busy
+ pys  +  ▾  ?             many agent teams, one Brahman · by CZ, an engineer for engineers, near the magnet             15.81  11-14 03:52
 ```
+
+Each piece of pys's row can go: `BUTTONS = False`, `SLOGAN = False`, `SHOW_WIDGETS = False`
+(or their rows in the settings). `GROUPS = False` turns the product lines off, for one who
+doesn't use groups or wants the rows: the plain flow of tabs, as without groups; each
+window keeps its group, so `pys-agents team` still works.
 
 It grows as soon as a tab would not fit whole and goes back only when a window opens or
 ends or the terminal is resized, like the status line's rows. `pys-agents team` lists the
@@ -238,8 +245,8 @@ windows of your own group with their roles (the first word of a title before a `
 ### Settings
 
 Prefix `o`, or a click on ` pys `, opens the settings: the buttons (`BUTTONS`), the status
-rows the tabs may take (`STATUS_LINES`), the widgets (`SHOW_WIDGETS`) and the mouse
-(`MOUSE`), each with its value and where it comes from (default, config.py, set here). A
+rows the tabs may take (`STATUS_LINES`), the widgets (`SHOW_WIDGETS`), the mouse
+(`MOUSE`), the motto (`SLOGAN`) and the product lines (`GROUPS`), each with its value and where it comes from (default, config.py, set here). A
 click or Enter on a row changes it at once (the next value, round to the first); the status
 rows, 1 to 5, are a stepper, `− 2 +`: a click on `−` or `+`, `←` `→`, `-` `+` or a digit sets them
 (more than 5 in `config.py`, if you want). It keeps what you set in
@@ -302,6 +309,7 @@ STATUS_LINES = 2                  # rows the window tabs may take; 1 = one row, 
                                   # (the settings offer 1 to 5; any number works here)
 BUTTONS = True                    # + ▾ ? after " pys "; False gives their room to the tabs
 SLOGAN = True                     # the motto, dim, in the status line's blank space
+GROUPS = True                     # product groups on lines of their own; False: the plain flow
 ```
 
 **The status line grows a row when the tabs don't fit** (up to `STATUS_LINES`, 2 by

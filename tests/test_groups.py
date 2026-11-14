@@ -132,3 +132,42 @@ def test_a_product_line_wraps_under_its_name():
     finally:
         t.close()
         sess.kill()
+
+
+def test_windows_in_no_group_get_a_line_and_pys_row_holds_none():
+    """In the product lines a window in no group has a line of its own, "others"; pys's own
+    row holds no window, only the buttons, the motto and its maker, the widgets. GROUPS =
+    False in the panel gives the plain flow back."""
+    from py_screen import about
+    sess = Session("grpothers")
+    t = Term(PYS + ["attach"], sess.env, 140, 20)
+    try:
+        t.wait_for("$ ")
+        a, b, c = three_windows(sess)
+        sess.pys("group", "--wid", str(c), "--clear")
+        # few windows: one row, the loose one led by "others" (not after product-b's)
+        wait(lambda: " others│" in t.text().splitlines()[-1], what=lambda: t.text())
+        row = t.text().splitlines()[-1]
+        assert row.index(" product-b│") < row.index(" others│") < row.index(f" {c}")
+        for w in (a, b, c):
+            sess.pys("title", "--wid", str(w), f"member-of-a-product-with-a-long-name-{w}")
+        wait(lambda: pane_h(sess) == 20 - 4, what=lambda: t.text())   # a, b, others, pys
+        lines = t.text().splitlines()
+        assert lines[-4].startswith(" product-a ") and lines[-3].startswith(" product-b ")
+        assert lines[-2].startswith(" others ") and f" {c}" in lines[-2]
+        assert lines[-1].startswith(" pys  +  ▾  ? ")
+        assert about.SLOGAN in lines[-1]                   # no tabs: the motto and its maker
+        assert not any(f" {w} " in lines[-1] or f" {w}* " in lines[-1] for w in (a, b, c))
+
+        t.send(b"\x1do")                                   # the panel: groups off
+        t.wait_for(" py-screen settings")
+        from py_screen import settings
+        click(t, 10, settings.KEYS.index("GROUPS") + 2)
+        wait(lambda: "GROUPS = False" in t.text(), what=lambda: t.text())
+        t.send(b"q")
+        wait(lambda: pane_h(sess) == 20 - 2, what=lambda: t.text())   # the plain flow
+        assert "product-a" not in t.text().splitlines()[-2]
+        assert sess.pys("group", "--wid", str(a)).strip() == "product-a"   # kept
+    finally:
+        t.close()
+        sess.kill()

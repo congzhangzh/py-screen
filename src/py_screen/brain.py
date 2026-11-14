@@ -818,7 +818,8 @@ class Brain:
             if i == h - 1 and msg is not None:
                 out.append(row + msg)
             elif i == h - 1:
-                out.append(row + line + self.status_gap(cols - used - right_w)
+                own = h > 1 and bool(labels) and not any(r == i for *_, r in tabs)
+                out.append(row + line + self.status_gap(cols - used - right_w, own)
                            + "".join(right_parts) + "\x1b[0m")
             else:
                 out.append(row + line + "\x1b[0m" + " " * max(0, cols - used))
@@ -833,30 +834,53 @@ class Brain:
                 out.append(g)
         return out
 
+    def status_groups(self) -> list[str]:
+        """The groups the status line shows: none while GROUPS is off (the plain flow of
+        tabs, for one who doesn't use them or wants the rows), the windows keep theirs."""
+        return self.groups() if self.cfg.groups else []
+
+    OTHERS = "others"                     # the name of the line for the windows in no group
+
     @staticmethod
-    def group_color(g: str) -> str:
+    def group_color(g: str | None) -> str:
+        if g is None:                     # the windows in no group: plain, dim name
+            return "\x1b[0;90m"
         return f"\x1b[0;1;{GROUP_COLORS[zlib.crc32(g.encode()) % len(GROUP_COLORS)]}m"
+
+    def line_name(self, g: str | None) -> str:
+        return self.OTHERS if g is None else g
+
+    def product_lines(self) -> tuple[list[str | None], dict]:
+        """The status line's product lines, in order: each group, then None for the windows
+        in no group (only if there are some); and {line: its windows}."""
+        gs: list[str | None] = list(self.status_groups())
+        members = {g: [wid for wid in self.order if self.wins[wid].group == g] for g in gs}
+        loose = [wid for wid in self.order if not self.wins[wid].group]
+        if loose:
+            gs.append(None)
+            members[None] = loose
+        return gs, members
 
     def status_layout(self, right_w: int, cols: int | None = None, h: int = 1
                       ) -> tuple[list[tuple[int, str, int, int]], list[tuple[str, str, int, int]],
                                  int, bool]:
         """Where everything goes on a status line of h rows: (tabs [(wid, label, x, row)],
-        group names [(text, colour, x, row)], the row " pys " and its buttons start, all
-        whole). Without groups: status_tabs, " pys " on the first row. With groups, the
-        product lines: on one row when it holds every tab whole (" pys + ▾ ? ", then each
-        group led by its name, then the windows in no group); else a row per group, its
-        name padded to one column, and pys's own row last (the buttons, the windows in no
-        group, the widgets). A product whose tabs don't fit its row goes on on more rows
-        of its own, under its name; only when the rows run out (h) does a tab show short
-        (" 7 "). fit_status picks h."""
+        line names [(text, colour, x, row)], the row " pys " and its buttons start, all
+        whole). Without groups (or GROUPS off): status_tabs, " pys " on the first row. With
+        groups, the product lines: on one row when it holds every tab whole (" pys + ▾ ? ",
+        then each group led by its name, then the windows in no group led by "others");
+        else a line per group and one for "others", each name padded to one column, and
+        pys's own row last, which holds no window: the buttons, the motto and its maker,
+        the widgets. A line whose tabs don't fit goes on on more rows of its own, under
+        its name; only when the rows run out (h) does a tab show short (" 7 "), and on a
+        terminal too short for every line the windows of the lines left out go on pys's
+        row. fit_status picks h."""
         cols = self.cols if cols is None else cols
-        gs = self.groups()
-        if not gs:
+        if not self.status_groups():
             tabs, fits = self.status_tabs(right_w, cols, h)
             return tabs, [], 0, fits
         x0 = self.status_left()[1]
-        members = {g: [wid for wid in self.order if self.wins[wid].group == g] for g in gs}
-        loose = [wid for wid in self.order if not self.wins[wid].group]
+        lines, members = self.product_lines()
         tabs: list[tuple[int, str, int, int]] = []
         labels: list[tuple[str, str, int, int]] = []
         fits = True
@@ -879,7 +903,7 @@ class Brain:
                         tabs.append((wid, full, x, rows[i]))
                         x += width(full)
                         break
-                    if i + 1 < len(rows):             # on to this product's next row
+                    if i + 1 < len(rows):             # on to this line's next row
                         i, x = i + 1, start
                         continue
                     fits = False
@@ -891,28 +915,29 @@ class Brain:
 
         if h == 1:
             x, end = x0, max(0, cols - right_w)
-            for g in gs:
-                text = f" {g}│"
+            for g in lines:
+                text = f" {self.line_name(g)}│"
                 if x + width(text) > end:
                     fits = False
                     break
                 labels.append((text, self.group_color(g), x, 0))
                 x = place(members[g], x + width(text), [0], 0, end)
-            place(loose, x, [0], 0, end)
             return tabs, labels, 0, fits
-        shown = gs[:h - 1]                       # a terminal too short for every line
-        loose = [wid for wid in self.order if self.wins[wid].group not in shown]
-        namew = max(width(g) for g in shown) + 2
+        shown = lines[:h - 1]                    # a terminal too short for every line
+        rest = [wid for g in lines[h - 1:] for wid in members[g]]
+        namew = max(width(self.line_name(g)) for g in shown) + 2
         rows_for = self.group_rows(shown, members, namew, cols, h - 1)
         r = h - 1 - sum(rows_for)
         for g, n in zip(shown, rows_for):
-            labels.append((f" {g}{' ' * (namew - 2 - width(g))} ", self.group_color(g), 0, r))
+            name = self.line_name(g)
+            labels.append((f" {name}{' ' * (namew - 2 - width(name))} ", self.group_color(g), 0, r))
             place(members[g], namew, list(range(r, r + n)), namew, cols)
             r += n
-        place(loose, x0, [h - 1], x0, max(0, cols - right_w))
+        if rest:
+            place(rest, x0, [h - 1], x0, max(0, cols - right_w))
         return tabs, labels, h - 1, fits
 
-    def group_rows(self, gs: list[str], members: dict[str, list[int]], namew: int, cols: int,
+    def group_rows(self, gs: list, members: dict, namew: int, cols: int,
                    avail: int | None = None) -> list[int]:
         """The rows each product line needs for its tabs whole (after a name column of
         namew); with avail, cut to fit: one row each first, then the rest in order."""
@@ -937,13 +962,18 @@ class Brain:
             extra -= add
         return out
 
-    def status_gap(self, n: int) -> str:
+    def status_gap(self, n: int, own_row: bool = False) -> str:
         """The blank between the tabs and the widgets, n cells: the motto, dim and centred,
-        when it fits whole with room to spare (SLOGAN, on by default); else blank. It only
-        fills what is empty: the tabs and the widgets are placed before it is."""
+        when it fits whole with room to spare (SLOGAN, on by default); else blank. On pys's
+        own row of the product lines (own_row: no tabs there) the motto and its maker,
+        where that fits. It only fills what is empty: the tabs and the widgets are placed
+        before it is."""
         n = max(0, n)
-        text = about.MOTTO
-        if not self.cfg.slogan or n < width(text) + 6:
+        if not self.cfg.slogan:
+            return " " * n
+        text = next((t for t in ((about.SLOGAN, about.MOTTO) if own_row else (about.MOTTO,))
+                     if n >= width(t) + 6), None)
+        if text is None:
             return " " * n
         left = (n - width(text)) // 2
         return " " * left + "\x1b[0;90m" + text + "\x1b[0m" + " " * (n - left - width(text))
@@ -974,14 +1004,14 @@ class Brain:
         So a title or a widget that changes its length (an agent's busy / free) can't
         make every pane jump by a row, and each app redraw. True if the rows changed."""
         right_w = self.status_right()[1]
-        if gs := self.groups():                   # one row, or a line per group + pys's own
+        if self.status_groups():                  # one row, or the product lines + pys's own
             top = max(1, self.rows - 2)
             if self.status_layout(right_w, None, 1)[3]:
                 need = 1
             else:
-                members = {g: [w for w in self.order if self.wins[w].group == g] for g in gs}
-                namew = max(width(g) for g in gs) + 2
-                need = min(sum(self.group_rows(gs, members, namew, self.cols)) + 1, top)
+                lines, members = self.product_lines()
+                namew = max(width(self.line_name(g)) for g in lines) + 2
+                need = min(sum(self.group_rows(lines, members, namew, self.cols)) + 1, top)
         else:
             top = max(1, min(self.cfg.status_lines, self.rows - 2))
             need = next((n for n in range(1, top + 1) if self.status_tabs(right_w, None, n)[1]),
@@ -1277,7 +1307,7 @@ class Brain:
         setattr(self.cfg, fieldname, value)
         if key == "SHOW_WIDGETS":
             self.widgets_shown = None             # prefix S's choice gives way to this one
-        if key == "STATUS_LINES":
+        if key in ("STATUS_LINES", "GROUPS"):
             self.status_shrink = True             # fewer rows may be allowed now
         try:
             values = settings.read()
