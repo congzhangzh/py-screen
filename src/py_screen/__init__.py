@@ -90,6 +90,15 @@ def main() -> None:
                     help="the owner is the Claude Code session this runs under, found by its "
                     "session file: right on every system (in Windows' Git Bash $PPID is not "
                     "claude's pid)")
+    gr = sub.add_parser("group", help="put a window in a product group (its own status line)",
+                        description="Put a window in a product group: all the windows that "
+                        "work for one product, shown together on the status line (on one row "
+                        "while it holds them, else a line per group). With no name and no "
+                        "--clear, print its group; --list prints every group's windows.")
+    gr.add_argument("name", nargs="?", help="letters, digits, . _ -; at most 16")
+    gr.add_argument("--wid", type=int, help="the window (default: the one this runs in)")
+    gr.add_argument("--clear", action="store_true")
+    gr.add_argument("--list", action="store_true", help="every group and its windows")
     at = sub.add_parser("attn", help="mark a window as wanting you (its tab turns red or green)",
                         description="Mark a window as wanting you: ask (it can't go on "
                         "without you; red) or done (it finished and waits; green). Switching "
@@ -171,7 +180,11 @@ def main() -> None:
                              "pass --owner PID")
         if a.cmd == "attn" and a.clear and a.level:
             sys.exit("pys: attn takes a level or --clear, not both")
-        if a.cmd in ("title", "attn"):
+        if a.cmd == "group" and a.clear and a.name:
+            sys.exit("pys: group takes a name or --clear, not both")
+        if a.cmd == "group" and a.list and a.wid is None and nested_in() is None:
+            a.wid = rpc(cmd="ls")["current"]     # --list reads every group: any window does
+        if a.cmd in ("title", "attn", "group"):
             if a.wid is None:
                 if (here := nested_in()) is None:
                     sys.exit("pys: not inside a window of this session; pass --wid")
@@ -192,6 +205,9 @@ def main() -> None:
                                 **({"level": None} if a.clear else
                                    {} if a.level is None else {"level": a.level,
                                                                "why": a.why or ""})),
+            "group": lambda: rpc(cmd="group", wid=a.wid,
+                                 **({"group": None} if a.clear else
+                                    {} if a.name is None else {"group": a.name})),
             "reload": lambda: rpc(cmd="reload"),
             "kill": lambda: rpc(cmd="kill"),
         }[a.cmd]()
@@ -208,6 +224,11 @@ def main() -> None:
         elif a.cmd == "title" and r["agent_title"] and r["title"]:
             print(f"pys: window {r['wid']} has a title set by hand, {r['title']!r}; "
                   "it is shown instead", file=sys.stderr)
+        elif a.cmd == "group" and a.list:
+            for g, wids in r["groups"].items():
+                print(f"{g}: {' '.join(map(str, wids))}")
+        elif a.cmd == "group" and a.name is None and not a.clear:
+            print(r["group"] or "")
         elif a.cmd == "attn" and a.level is None and not a.clear:
             print(f"{r['attn']}: {r['attn_why']}" if r["attn"] else "")
         elif a.cmd == "attn" and a.level and not r["attn"] and r["focused"]:

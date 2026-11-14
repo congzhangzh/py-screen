@@ -38,12 +38,27 @@ types the next prompt there. Mark ask only for a real decision, not for a report
 that needs nothing teaches the user to ignore red. There is no title state for it: the title
 ends in `busy` or `free`, and the mark is what asks.
 
+## Join your product's group
+
+When the user runs several products in one pys, put your window in yours, once, near the
+start (your brief or the user names it):
+
+```bash
+pys group product-a          # your window joins product-a's line on the status line
+pys-agents team              # your group's windows and their roles: who is the po, the rel
+```
+
+`pys group` prints your window's group; `pys group --wid N <name>` sets another's (a release
+manager for its members). Find your product owner or release manager with `pys-agents team`,
+not by guessing from titles: an area's name (`comp-ui-…`) doesn't say which product it is in.
+
 ## See what runs where
 
 | Command | Gives |
 |---|---|
 | `pys-agents` | every running claude: window, title, state (busy / idle), context size, compactions, model, name, folder |
 | `pys-agents --json` | the same as JSON |
+| `pys-agents team` | your product group's windows, each with its role (po, rel, …) and its agent |
 | `pys-agents where` | every window: folder, git branch @HEAD, `(wt)` for a linked worktree, changes (`1 mod 3 new ↑2`), the agent in it; `--json` too. Look here before you work in a repo another window works in: two agents on one worktree step on each other |
 | `pys ls --json` | every window: `wid`, `pid` (its shell), `cmd`, `cwd`, `name` (what shows), `title`, `agent_title`, `app_title`, `agent_owner` |
 | `pys capture <wid>` | the window's screen now, as text; `--history` adds the scrollback, `--json` the cursor too |

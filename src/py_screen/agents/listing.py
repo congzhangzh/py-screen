@@ -6,6 +6,13 @@
   pys-agents where [--json]           every window: its folder, the git branch @HEAD there
                                       (and whether it is a linked worktree), its changes
                                       against the upstream, and the agent in it if any
+  pys-agents team [--group G] [--json]
+                                      the windows of a product group (default: this
+                                      window's, `pys group`), each with its role, the first
+                                      word of its title before a `-` (po-…, rel-…), so a
+                                      member finds its product owner or release manager
+  pys-agents --group G, where --group G
+                                      only the windows of that group
   pys-agents skills [--install [--dir DIR]]
                                       the agent skills that come with pys; --install links
                                       them into DIR (default ~/.claude/skills)
@@ -53,6 +60,7 @@ def agents() -> list[dict]:
         out.append({
             "window": w["wid"] if w else None,
             "title": (w.get("name") if w else None),
+            "group": (w.get("group") if w else None),
             "titled_by_it": bool(w and w.get("agent_owner") == pid),
             "pid": pid, "session": s.get("sessionId"), "name": s.get("name"),
             "state": s.get("status"), "cwd": s.get("cwd"),
@@ -76,7 +84,8 @@ def where() -> list[dict]:
         pid = next((p for p in tree if p in live), None)
         s = live.get(pid) if pid else None
         cwd = (s or {}).get("cwd") or procs.cwd(w["pid"]) or w.get("cwd")
-        rows.append({"window": w["wid"], "title": w.get("name"), "cwd": cwd, "session": s,
+        rows.append({"window": w["wid"], "title": w.get("name"), "group": w.get("group"),
+                     "cwd": cwd, "session": s,
                      "agent": {"kind": "claude", "pid": pid, "name": s.get("name"),
                                "session": s.get("sessionId"), "state": s.get("status")}
                      if s else None})
@@ -104,8 +113,44 @@ def table(head: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)) + "  " + r[-1])
 
 
+def role(title: str | None) -> str | None:
+    """A member's role from its title: the first word's part before a `-`
+    (`po-product-a-g2 free` → po); None for a title not in that form."""
+    first = (title or "").split(" ", 1)[0]
+    return first.split("-", 1)[0] or None if "-" in first else None
+
+
+def cmd_team(a) -> int:
+    g = a.group
+    if g is None:
+        here = os.environ.get("PYS_WINDOW")
+        mine = next((w for w in windows() if str(w["wid"]) == here), None) if here else None
+        g = mine and mine.get("group")
+        if not g:
+            print("pys-agents: this window is in no group (pys group <name>); pass --group",
+                  file=sys.stderr)
+            return 1
+    live = {r["window"]: r for r in agents() if r["window"] is not None}
+    rows = [{"window": w["wid"], "role": role(w.get("name")), "title": w.get("name"),
+             "agent": live.get(w["wid"])} for w in windows() if w.get("group") == g]
+    if a.json:
+        print(json.dumps({"group": g, "windows": rows}, indent=1, ensure_ascii=False))
+        return 0
+    if not rows:
+        print(f"no window in group {g}")
+        return 0
+    print(f"group {g}:")
+    table(("WIN", "ROLE", "TITLE", "AGENT"), [(
+        str(r["window"]), r["role"] or "-", (r["title"] or "-")[:28],
+        f"claude {ag['name'] or (ag['session'] or '')[:8]} ({ag['state'] or '-'})"
+        if (ag := r["agent"]) else "-") for r in rows])
+    return 0
+
+
 def cmd_where(a) -> int:
     rows = where()
+    if a.group:
+        rows = [r for r in rows if r["group"] == a.group]
     if a.json:
         print(json.dumps(rows, indent=1, ensure_ascii=False))
         return 0
@@ -143,15 +188,17 @@ def kilo(n: int | None) -> str:
 
 def cmd_list(a) -> int:
     rows = agents()
+    if getattr(a, "group", None):
+        rows = [r for r in rows if r["group"] == a.group]
     if a.json:
         print(json.dumps(rows, indent=1, ensure_ascii=False))
         return 0
     if not rows:
         print("no Claude Code session is running")
         return 0
-    table(("WIN", "TITLE", "STATE", "CTX", "COMPACT", "MODEL", "NAME", "FOLDER"), [(
+    table(("WIN", "TITLE", "GROUP", "STATE", "CTX", "COMPACT", "MODEL", "NAME", "FOLDER"), [(
         "-" if r["window"] is None else str(r["window"]),
-        (r["title"] or "-")[:24], r["state"] or "-", kilo(r["context_tokens"]),
+        (r["title"] or "-")[:24], r["group"] or "-", r["state"] or "-", kilo(r["context_tokens"]),
         "-" if r["compactions"] is None else str(r["compactions"]),
         (r["model"] or "-").removeprefix("claude-"), (r["name"] or "-")[:20],
         short_path(r["cwd"])) for r in rows])
@@ -232,14 +279,21 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pys-agents", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="one object per claude")
+    ap.add_argument("--group", help="only the windows of this product group")
     ap.set_defaults(f=cmd_list)
     sp = ap.add_subparsers(dest="cmd")
     p = sp.add_parser("ls", help="the default: list the agents")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--group", help="only the windows of this product group")
     p.set_defaults(f=cmd_list)
     p = sp.add_parser("where", help="every window: folder, git branch, worktree, changes, agent")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--group", help="only the windows of this product group")
     p.set_defaults(f=cmd_where)
+    p = sp.add_parser("team", help="the windows of a product group, with their roles")
+    p.add_argument("--group", help="default: the group of the window this runs in")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(f=cmd_team)
     p = sp.add_parser("skills", help="the agent skills that come with pys")
     p.add_argument("--install", action="store_true")
     p.add_argument("--dir", default="~/.claude/skills")

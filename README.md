@@ -209,6 +209,32 @@ A row costs about 36 bytes per cell up to its last visible one: a window full of
 100-column lines holds ~18 MB at 5000 rows. Keeping rows has a price on floods too: about
 0.2 µs a line (see `bench/README.md`).
 
+### Product groups
+
+When one pys holds the windows of several products (each with its own team: a product
+owner, a release manager, the members for its parts), `pys group <name>` puts a window in
+its product's group, from inside it, or `pys group --wid 7 product-a` from anywhere.
+`pys group` prints a window's group, `--list` every group and its windows, `--clear` takes
+a window out. The group is the window's, kept across a reload and by `pys-sessions`.
+
+The status line shows the groups together. While one row holds every tab, that row has
+each group led by its name; when it doesn't, each product gets its own line, more rows of
+its own when its tabs need them (indented under its name), and pys's own row comes last
+with the buttons, the windows in no group and the widgets:
+
+```
+ product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy   3 dbg-product-a-g1 busy  4 comp-server-g4 free  5 edu-product-a-g1 free
+            6 po-product-a-g3 #374 free  7 rev-review-g3 free  8 comp-client-g1 #374 busy
+ product-b  2 po-product-b-g8 free  9 comp-sync-g1 free
+ pys  +  ▾  ?  10 po-pys-g1 groups busy                    many windows, one Brahman                    15.81  11-14 03:52
+```
+
+It grows as soon as a tab would not fit whole and goes back only when a window opens or
+ends or the terminal is resized, like the status line's rows. `pys-agents team` lists the
+windows of your own group with their roles (the first word of a title before a `-`:
+`po-…`, `rel-…`), so a member finds its product owner; `pys-agents --group` and
+`pys-agents where --group` keep to one group. The window list (`F2`) has a Group column.
+
 ### Settings
 
 Prefix `o`, or a click on ` pys `, opens the settings: the buttons (`BUTTONS`), the status

@@ -17,6 +17,7 @@ import re
 import sys
 import time
 import traceback
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -108,6 +109,9 @@ NO_PREFIX = [
 # ("close? ✕") before it closes. Each glyph is one cell wide in every terminal: Neutral in
 # East Asian Width (☰ is Wide, × and ≡ Ambiguous: two cells in a CJK locale).
 NEW_TAB = " + "
+GROUP_MAX = 16
+GROUP_RE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{GROUP_MAX - 1}}}")
+GROUP_COLORS = (36, 35, 32, 34, 33)   # a group's name on the status line, bold: by its name
 LIST_TAB = " ▾ "
 HELP_TAB = " ? "
 CLOSE = " ✕ "
@@ -192,6 +196,10 @@ class Window:
     # client is attached (you saw it), or by `pys attn --clear`. See Brain.attend.
     attn: str | None = None
     attn_why: str = ""
+    # The product group it belongs to (`pys group <name>`): all the windows that work for one
+    # product, shown together on the status line. It is the window's, not its agent's: the
+    # shell left behind still works there. None: in no group.
+    group: str | None = None
     attn_at: float = 0.0
     alert: bool = False          # its app rang since the brain last looked (term.take_alert)
 
@@ -646,6 +654,7 @@ class Brain:
                             if w.owner is not None},
                  "attn": {w.wid: [w.attn, w.attn_why, w.attn_at] for w in self.wins.values()
                           if w.attn},
+                 "groups": {w.wid: w.group for w in self.wins.values() if w.group},
                  "order": self.order}
         if self.widgets_shown is not None:
             state["widgets_shown"] = self.widgets_shown
@@ -691,6 +700,9 @@ class Brain:
         for k, t in state.get("agent_titles", {}).items():
             if int(k) in self.wins:
                 self.wins[int(k)].agent_title = t
+        for k, g in state.get("groups", {}).items():
+            if int(k) in self.wins and isinstance(g, str):
+                self.wins[int(k)].group = g
         for k, (pid, start) in state.get("owners", {}).items():
             if int(k) in self.wins:                # owner_loop drops it if it's gone
                 self.wins[int(k)].owner, self.wins[int(k)].owner_start = pid, start
@@ -774,34 +786,154 @@ class Brain:
                        if x < vc and y + i < vr - self.status_h)
 
     def status_line(self, c: Client | None = None) -> str:
-        """The status line: its rows at the bottom of the view. The window tabs flow like
-        text from its first row, after " pys + "; the widgets sit at the right of its last
-        row. A mode (rename, copy, resize, the key hold) says what it does on the last row."""
+        """The status line: its rows at the bottom of the view. Without groups the window
+        tabs flow like text from its first row, after " pys + "; with groups, see
+        status_layout. The widgets sit at the right of its last row. A mode (rename, copy,
+        resize, the key hold) says what it does on the last row."""
         cols, rows = self.view(c)
         h = self.status_h
         msg = self.status_message(c, cols)
         right_parts, right_w = ([], 0) if msg is not None else self.status_right(cols)
         left, left_w = self.status_left()
-        lines = [left if i == 0 else "" for i in range(h)]
-        used = [left_w if i == 0 else 0 for i in range(h)]
-        for wid, label, x, r in self.status_tabs(right_w, cols, h)[0]:
+        tabs, labels, prow, _ = self.status_layout(right_w, cols, h)
+        items: list[list[tuple[int, str, int]]] = [[] for _ in range(h)]
+        items[prow].append((0, left, left_w))
+        for text, color, x, r in labels:
+            items[r].append((x, f"{color}{text}\x1b[0m", width(text)))
+        for wid, label, x, r in tabs:
             if msg is not None and r == h - 1:
                 continue
             color = ("\x1b[0;30;43m" if wid == self.current else
                      ATTN_COLORS.get(self.wins[wid].attn, ""))
-            lines[r] += f"{color}{label}\x1b[0m" if color else label
-            used[r] = x + width(label)
+            items[r].append((x, f"{color}{label}\x1b[0m" if color else label, width(label)))
         out = []
         for i in range(h):
             row = f"\x1b[{rows - h + i + 1};1H"
+            line, used = "", 0                    # a gap (a product's next row) is blank
+            for x, text, w in sorted(items[i], key=lambda it: it[0]):
+                line += " " * max(0, x - used) + text
+                used = max(used, x + w)
             if i == h - 1 and msg is not None:
                 out.append(row + msg)
             elif i == h - 1:
-                out.append(row + lines[i] + self.status_gap(cols - used[i] - right_w)
+                out.append(row + line + self.status_gap(cols - used - right_w)
                            + "".join(right_parts) + "\x1b[0m")
             else:
-                out.append(row + lines[i] + "\x1b[0m" + " " * max(0, cols - used[i]))
+                out.append(row + line + "\x1b[0m" + " " * max(0, cols - used))
         return "".join(out)
+
+    def groups(self) -> list[str]:
+        """The product groups, in the order their first window comes."""
+        out: list[str] = []
+        for wid in self.order:
+            g = self.wins[wid].group
+            if g and g not in out:
+                out.append(g)
+        return out
+
+    @staticmethod
+    def group_color(g: str) -> str:
+        return f"\x1b[0;1;{GROUP_COLORS[zlib.crc32(g.encode()) % len(GROUP_COLORS)]}m"
+
+    def status_layout(self, right_w: int, cols: int | None = None, h: int = 1
+                      ) -> tuple[list[tuple[int, str, int, int]], list[tuple[str, str, int, int]],
+                                 int, bool]:
+        """Where everything goes on a status line of h rows: (tabs [(wid, label, x, row)],
+        group names [(text, colour, x, row)], the row " pys " and its buttons start, all
+        whole). Without groups: status_tabs, " pys " on the first row. With groups, the
+        product lines: on one row when it holds every tab whole (" pys + ▾ ? ", then each
+        group led by its name, then the windows in no group); else a row per group, its
+        name padded to one column, and pys's own row last (the buttons, the windows in no
+        group, the widgets). A product whose tabs don't fit its row goes on on more rows
+        of its own, under its name; only when the rows run out (h) does a tab show short
+        (" 7 "). fit_status picks h."""
+        cols = self.cols if cols is None else cols
+        gs = self.groups()
+        if not gs:
+            tabs, fits = self.status_tabs(right_w, cols, h)
+            return tabs, [], 0, fits
+        x0 = self.status_left()[1]
+        members = {g: [wid for wid in self.order if self.wins[wid].group == g] for g in gs}
+        loose = [wid for wid in self.order if not self.wins[wid].group]
+        tabs: list[tuple[int, str, int, int]] = []
+        labels: list[tuple[str, str, int, int]] = []
+        fits = True
+
+        def label_of(wid: int, short: bool) -> str:
+            w = self.wins[wid]
+            flag = ("*" if wid == self.current else "!" if w.attn else
+                    "-" if wid == self.last else "")
+            return f" {wid}{flag} " if short else f" {wid}{flag} {w.name} "
+
+        def place(wids: list[int], x: int, rows: list[int], start: int, end: int) -> int:
+            """Place wids on the given rows (each from `start`, the first from x), whole
+            where they fit, moving on a row when one is full; short on the last row."""
+            nonlocal fits
+            i = 0
+            for wid in wids:
+                while True:
+                    full, short = label_of(wid, False), label_of(wid, True)
+                    if x + width(full) <= end:
+                        tabs.append((wid, full, x, rows[i]))
+                        x += width(full)
+                        break
+                    if i + 1 < len(rows):             # on to this product's next row
+                        i, x = i + 1, start
+                        continue
+                    fits = False
+                    if x + width(short) <= end:
+                        tabs.append((wid, short, x, rows[i]))
+                        x += width(short)
+                    break
+            return x
+
+        if h == 1:
+            x, end = x0, max(0, cols - right_w)
+            for g in gs:
+                text = f" {g}│"
+                if x + width(text) > end:
+                    fits = False
+                    break
+                labels.append((text, self.group_color(g), x, 0))
+                x = place(members[g], x + width(text), [0], 0, end)
+            place(loose, x, [0], 0, end)
+            return tabs, labels, 0, fits
+        shown = gs[:h - 1]                       # a terminal too short for every line
+        loose = [wid for wid in self.order if self.wins[wid].group not in shown]
+        namew = max(width(g) for g in shown) + 2
+        rows_for = self.group_rows(shown, members, namew, cols, h - 1)
+        r = h - 1 - sum(rows_for)
+        for g, n in zip(shown, rows_for):
+            labels.append((f" {g}{' ' * (namew - 2 - width(g))} ", self.group_color(g), 0, r))
+            place(members[g], namew, list(range(r, r + n)), namew, cols)
+            r += n
+        place(loose, x0, [h - 1], x0, max(0, cols - right_w))
+        return tabs, labels, h - 1, fits
+
+    def group_rows(self, gs: list[str], members: dict[str, list[int]], namew: int, cols: int,
+                   avail: int | None = None) -> list[int]:
+        """The rows each product line needs for its tabs whole (after a name column of
+        namew); with avail, cut to fit: one row each first, then the rest in order."""
+        need = []
+        for g in gs:
+            n, x = 1, namew
+            for wid in members[g]:
+                w = self.wins[wid]
+                flag = ("*" if wid == self.current else "!" if w.attn else
+                        "-" if wid == self.last else "")
+                lw = width(f" {wid}{flag} {w.name} ")
+                if x + lw > cols and x > namew:
+                    n, x = n + 1, namew
+                x += lw
+            need.append(n)
+        if avail is None:
+            return need
+        out, extra = [1] * len(gs), max(0, avail - len(gs))
+        for i, n in enumerate(need):
+            add = min(n - 1, extra)
+            out[i] += add
+            extra -= add
+        return out
 
     def status_gap(self, n: int) -> str:
         """The blank between the tabs and the widgets, n cells: the motto, dim and centred,
@@ -839,9 +971,19 @@ class Brain:
         gives a row back only after a window opened or ended or the terminal was resized.
         So a title or a widget that changes its length (an agent's busy / free) can't
         make every pane jump by a row, and each app redraw. True if the rows changed."""
-        top = max(1, min(self.cfg.status_lines, self.rows - 2))
         right_w = self.status_right()[1]
-        need = next((n for n in range(1, top + 1) if self.status_tabs(right_w, None, n)[1]), top)
+        if gs := self.groups():                   # one row, or a line per group + pys's own
+            top = max(1, self.rows - 2)
+            if self.status_layout(right_w, None, 1)[3]:
+                need = 1
+            else:
+                members = {g: [w for w in self.order if self.wins[w].group == g] for g in gs}
+                namew = max(width(g) for g in gs) + 2
+                need = min(sum(self.group_rows(gs, members, namew, self.cols)) + 1, top)
+        else:
+            top = max(1, min(self.cfg.status_lines, self.rows - 2))
+            need = next((n for n in range(1, top + 1) if self.status_tabs(right_w, None, n)[1]),
+                        top)
         shrink, self.status_shrink = self.status_shrink, False
         h = self.status_h
         if need > h or (shrink and need < h):
@@ -953,12 +1095,15 @@ class Brain:
     def window_list(self, c: Client) -> list[str]:
         area = c.rows - self.status_h
         c.list_idx = max(0, min(c.list_idx, len(self.order) - 1))   # a window may have gone
-        rows = [fit(" Num  Title" + " " * 20 + "Dir", c.cols)]
+        gw = max((width(w.group or "") for w in self.wins.values()), default=0)
+        gw = gw + 2 if gw else 0                  # a Group column only when one is set
+        rows = [fit(" Num  Title" + " " * 20 + ("Group".ljust(gw) if gw else "") + "Dir", c.cols)]
         for i, wid in enumerate(self.order):
             w = self.wins[wid]
             mark = "!" if w.attn else " "
             btn = self.list_close_label(c, wid)
-            text = fit(f" {wid:>3}{mark} {fit(w.name, 24)} {cfgmod.home_path(w.cwd())}",
+            grp = fit(w.group or "", gw) if gw else ""
+            text = fit(f" {wid:>3}{mark} {fit(w.name, 24)} {grp}{cfgmod.home_path(w.cwd())}",
                        max(0, c.cols - width(btn)))
             rows.append((i, text, btn))
         out = [f"\x1b[1;1H\x1b[0;30;46m{rows[0]}\x1b[0m"]
@@ -1554,11 +1699,12 @@ class Brain:
         click on a window's tab
         selects it, a middle-click on it kills that window (as prefix X does for the one
         in front)."""
-        if row == 0 and ev.x < 5 and ev.button == 0:   # " pys ": the settings
+        tabs, _labels, prow, _ = self.status_layout(self.status_right()[1], None, self.status_h)
+        if row == prow and ev.x < 5 and ev.button == 0:   # " pys ": the settings
             self.open_settings(c)
             return
         for b, x in self.status_buttons():
-            if row == 0 and x <= ev.x < x + width(b):
+            if row == prow and x <= ev.x < x + width(b):
                 if ev.button == 0 and b == NEW_TAB:
                     w = await self.new_window_here()
                     self.select(w.wid)
@@ -1568,7 +1714,7 @@ class Brain:
                     c.mode, c.help_page = "help", 0
                     self.schedule_render()
                 return
-        for wid, label, x, r in self.status_tabs(self.status_right()[1], None, self.status_h)[0]:
+        for wid, label, x, r in tabs:
             if r == row and x <= ev.x < x + width(label):
                 if ev.button == 1:
                     log(f"middle-click on its tab: kill window {wid}")
@@ -1878,7 +2024,7 @@ class Brain:
                                  "mouse": mouse.level(w.term.mode), "scroll": w.scroll,
                                  "history": w.term.history, "copy": w.copy is not None,
                                  "attn": w.attn, "attn_why": w.attn_why or None,
-                                 "attn_at": w.attn_at or None}
+                                 "attn_at": w.attn_at or None, "group": w.group}
                                 for w in (self.wins[i] for i in self.order)],
                     "panes": [{"wid": p.wid, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
                                "focus": p is self.layout.focus} for p in self.layout.panes()]}
@@ -1899,6 +2045,24 @@ class Brain:
                 self.set_agent_title(w, text or None, owner, start)
             return {"ok": True, "wid": w.wid, "agent_title": w.agent_title,
                     "agent_owner": w.owner, "title": w.title, "name": w.name}
+        if cmd == "group":
+            w = self.wins.get(m.get("wid"))
+            if w is None:
+                return {"ok": False, "error": f"no window {m.get('wid')}"}
+            if "group" in m:                      # absent: only read it; None: clear it
+                g = m["group"]
+                if g is not None and not GROUP_RE.fullmatch(g):
+                    return {"ok": False, "error": f"group {g!r}: letters, digits, . _ -, "
+                            f"at most {GROUP_MAX}"}
+                if g != w.group:
+                    w.group = g
+                    self.status_dirty = self.status_shrink = True   # the lines may change
+                    self.schedule_render()
+                    self.save_state()
+                    self.changed()
+            return {"ok": True, "wid": w.wid, "group": w.group,
+                    "groups": {g: [x.wid for x in self.wins.values() if x.group == g]
+                               for g in self.groups()}}
         if cmd == "attn":
             w = self.wins.get(m.get("wid"))
             if w is None:
@@ -2042,7 +2206,7 @@ class Brain:
                "ended": stamp(now) if ended else None,
                "windows": [{"wid": w.wid, "pid": w.pid, "cmd": w.cmd, "cwd": w.cwd(),
                             "name": w.name, "title": w.title, "agent_title": w.agent_title,
-                            "agent_owner": w.owner}
+                            "agent_owner": w.owner, "group": w.group}
                            for w in (self.wins[i] for i in self.order)]}
         path = self.record_path()
         tmp = path.with_name(path.name + ".tmp")

@@ -143,7 +143,7 @@ def cmd_save(a) -> int:
         cwd = procs.cwd(w["pid"]) or w.get("cwd")
         wins.append({
             "wid": w["wid"], "name": w.get("name"), "title": w.get("title"),
-            "agent_title": w.get("agent_title"), "cmd": w.get("cmd"),
+            "agent_title": w.get("agent_title"), "cmd": w.get("cmd"), "group": w.get("group"),
             "cwd": cwd, "shell_pid": w["pid"], "foreground": fg, "agent": agent,
         })
         w_ = wins[-1]
@@ -308,6 +308,8 @@ def cmd_restore(a) -> int:
             print(f"           {g}")
         if gone := folder_gone(w):
             print(f"           ⚠ {gone}")
+        if w.get("group"):
+            print(f"           group {w['group']}")
     if not a.yes:
         print("dry run; add --yes to open them")
         return 0
@@ -327,6 +329,8 @@ def cmd_restore(a) -> int:
             # agent was faster and named the window already: its own title is the truth
             pys("title", "--wid", str(new[0]["wid"]), "--owner", str(new[0]["pid"]),
                 f"↺{t}"[:28], check=False)
+        if new and w.get("group"):               # back in its product group
+            pys("group", "--wid", str(new[0]["wid"]), w["group"], check=False)
         print(f"  opened win {new[0]['wid'] if new else '?'} for old win {w['wid']} ({t})")
     return 0
 
@@ -520,7 +524,7 @@ def cmd_forensic(a) -> int:
             v = wins.get(rw.get("wid"))
             if v is None:
                 continue
-            for k in ("cwd", "name", "title", "agent_title"):
+            for k in ("cwd", "name", "title", "agent_title", "group"):
                 if rw.get(k):
                     v[k] = rw[k]
             v["why"] += "; folder and titles from the server record"
