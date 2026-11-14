@@ -89,10 +89,11 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         y = settings.KEYS.index("STATUS_LINES") + 2
         click(t, 10, y)                                   # a click on the row: 2 -> 3
         wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
-        row = t.text().splitlines()[y]
-        assert "− 3 +" in row
-        click(t, row.rindex("+"), y)                      # +: one up
+        # the file is written before the panel redraws: wait for the screen too
+        wait(lambda: "− 3 +" in t.text().splitlines()[y], what=lambda: t.text())
+        click(t, t.text().splitlines()[y].rindex("+"), y)   # +: one up
         wait(lambda: "STATUS_LINES = 4" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "− 4 +" in t.text().splitlines()[y], what=lambda: t.text())
         click(t, t.text().splitlines()[y].index("−"), y)  # −: one down
         wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
         t.send(b"5")                                      # a digit sets it
