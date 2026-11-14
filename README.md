@@ -240,7 +240,9 @@ windows of your own group with their roles (the first word of a title before a `
 Prefix `o`, or a click on ` pys `, opens the settings: the buttons (`BUTTONS`), the status
 rows the tabs may take (`STATUS_LINES`), the widgets (`SHOW_WIDGETS`) and the mouse
 (`MOUSE`), each with its value and where it comes from (default, config.py, set here). A
-click or Enter on a row changes it at once and keeps it in
+click or Enter on a row changes it at once (the next value, round to the first); the status
+rows, 1 to 5, are a stepper, `− 2 +`: a click on `−` or `+`, `←` `→`, `-` `+` or a digit sets them
+(more than 5 in `config.py`, if you want). It keeps what you set in
 `~/.config/pys/config.d/50-settings.py`, a file the panel writes whole; your `config.py` is
 never touched, and as config.d runs after it, a value set here wins. Below, **Files pys
 uses**: your config and its drop-ins, the skills linked into Claude Code and where they point,
@@ -296,6 +298,7 @@ BIND = {"T": ("top", ["htop"])}   # C-a T opens a window running htop
 MOUSE = True                      # False: plain drags select text in the terminal
 SCROLLBACK = 5000                 # rows of history per window; 0 = none
 STATUS_LINES = 2                  # rows the window tabs may take; 1 = one row, as before
+                                  # (the settings offer 1 to 5; any number works here)
 BUTTONS = True                    # + ▾ ? after " pys "; False gives their room to the tabs
 SLOGAN = True                     # the motto, dim, in the status line's blank space
 ```

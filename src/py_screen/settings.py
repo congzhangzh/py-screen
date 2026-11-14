@@ -21,7 +21,7 @@ FILE = "50-settings.py"
 # What the panel shows, in order: (config key, Config field, what it is, the values).
 ROWS: list[tuple[str, str, str, tuple]] = [
     ("BUTTONS", "buttons", 'the + ▾ ? buttons after " pys "', (True, False)),
-    ("STATUS_LINES", "status_lines", "status rows the window tabs may take", (1, 2, 3)),
+    ("STATUS_LINES", "status_lines", "status rows the window tabs may take", (1, 2, 3, 4, 5)),
     ("SHOW_WIDGETS", "show_widgets", "the widgets on the right of the status line",
      (True, False)),
     ("MOUSE", "mouse", "the mouse: clicks, drags, the wheel", (True, False)),
@@ -76,6 +76,24 @@ def step(key: str, value) -> object:
     values = next(r[3] for r in ROWS if r[0] == key)
     i = values.index(value) if value in values else -1
     return values[(i + 1) % len(values)]
+
+
+def nudge(key: str, value, d: int) -> object:
+    """The value one step down (d < 0) or up from value, as a click on − +, or ← → - + give it: a
+    number stops at its ends (a config's own 8 stays on + and comes down to 5 on −), an
+    on/off flips."""
+    values = next(r[3] for r in ROWS if r[0] == key)
+    if isinstance(value, bool) or all(isinstance(v, bool) for v in values):
+        return not value
+    lo, hi = min(values), max(values)
+    if (d > 0 and value >= hi) or (d < 0 and value <= lo):
+        return value                      # at an end (or a config's own 8): left as it is
+    return min(max(value + d, lo), hi)
+
+
+def numeric(key: str) -> bool:
+    """A row with numbers to step through (− n + in the panel, a stepper), not an on/off."""
+    return not any(isinstance(v, bool) for v in next(r[3] for r in ROWS if r[0] == key))
 
 
 def files() -> list[tuple[str, str, str, str]]:

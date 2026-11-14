@@ -42,8 +42,17 @@ def test_the_about_line():
 
 def test_step():
     assert settings.step("BUTTONS", True) is False
-    assert settings.step("STATUS_LINES", 2) == 3 and settings.step("STATUS_LINES", 3) == 1
+    assert settings.step("STATUS_LINES", 2) == 3 and settings.step("STATUS_LINES", 5) == 1
     assert settings.step("STATUS_LINES", 7) == 1          # a config's own value: back to the first
+
+
+def test_nudge():
+    assert settings.nudge("STATUS_LINES", 2, 1) == 3 and settings.nudge("STATUS_LINES", 2, -1) == 1
+    assert settings.nudge("STATUS_LINES", 5, 1) == 5 and settings.nudge("STATUS_LINES", 1, -1) == 1
+    assert settings.nudge("STATUS_LINES", 8, 1) == 8      # a config's own 8: + leaves it
+    assert settings.nudge("STATUS_LINES", 8, -1) == 5     # − brings it into the panel's range
+    assert settings.nudge("BUTTONS", True, 1) is False and settings.nudge("MOUSE", False, -1) is True
+    assert settings.numeric("STATUS_LINES") and not settings.numeric("BUTTONS")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the pty harness is POSIX-only")
@@ -74,7 +83,22 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
 
         click(t, 2, 19)                                   # a click on " pys " opens it too
         t.wait_for(" py-screen settings")
-        click(t, 10, settings.KEYS.index("STATUS_LINES") + 2)   # 2 -> 3
+        y = settings.KEYS.index("STATUS_LINES") + 2
+        click(t, 10, y)                                   # a click on the row: 2 -> 3
+        wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
+        row = t.text().splitlines()[y]
+        assert "− 3 +" in row
+        click(t, row.rindex("+"), y)                      # +: one up
+        wait(lambda: "STATUS_LINES = 4" in kept.read_text(), what=lambda: kept.read_text())
+        click(t, t.text().splitlines()[y].index("−"), y)  # −: one down
+        wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
+        t.send(b"5")                                      # a digit sets it
+        wait(lambda: "STATUS_LINES = 5" in kept.read_text(), what=lambda: kept.read_text())
+        t.send(b"+")                                      # the top: stays, and says so
+        wait(lambda: "the most here; more in config.py" in t.text(), what=lambda: t.text())
+        t.send(b"\x1b[D")                                 # ←: one down
+        wait(lambda: "STATUS_LINES = 4" in kept.read_text(), what=lambda: kept.read_text())
+        t.send(b"3")
         wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
         click(t, 10, 15)                                  # off the rows: closes
         wait(lambda: " py-screen settings" not in t.text(), what=lambda: t.text())

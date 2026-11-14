@@ -75,6 +75,8 @@ ATTN_WHY_MAX = 80
 
 UP = (b"\x1b[A", b"\x1bOA", b"k")
 DOWN = (b"\x1b[B", b"\x1bOB", b"j")
+LESS = (b"\x1b[D", b"\x1bOD", b"h", b"-")              # the settings: a number down (as −)
+MORE = (b"\x1b[C", b"\x1bOC", b"l", b"+", b"=")        # and up
 F2 = (b"\x1bOQ", b"\x1b[12~")
 ALT_TAB = (b"\x1b\t",)                         # Alt+Tab: ESC prefix + Tab
 ALT_SHIFT_TAB = (b"\x1b\x1b[Z",)               # Alt+Shift+Tab: ESC prefix + back-tab (CSI Z)
@@ -1194,6 +1196,19 @@ class Brain:
 
     # ---- the settings panel ---------------------------------------------------------
     SETTINGS_TOP = 2                      # the panel's first setting row on the screen
+    SETTINGS_VALUE_W = 7                  # its value column: "on", "off", "− 3 +", "− 12 +"
+    SETTINGS_VALUE_X = 3 + 46 + 1         # where that column starts
+
+    def settings_arrow(self, i: int, x: int) -> int:
+        """-1 / +1 if column x of setting row i is on its − / + (or the cell beside it: a
+        finger is not a pin), else 0."""
+        key, fieldname = settings.ROWS[i][:2]
+        if not settings.numeric(key):
+            return 0
+        shown = f"− {getattr(self.cfg, fieldname)} +"
+        at = self.SETTINGS_VALUE_X + max(0, self.SETTINGS_VALUE_W - len(shown))
+        left, right = at, at + len(shown) - 1
+        return -1 if abs(x - left) <= 1 else 1 if abs(x - right) <= 1 else 0
 
     @staticmethod
     def title_bar(title: str, cols: int) -> str:
@@ -1222,13 +1237,14 @@ class Brain:
                                           "\x1b[0;30;46m"), ("", "")]
         for i, (key, fieldname, what, _values) in enumerate(settings.ROWS):
             v = getattr(self.cfg, fieldname)
-            shown = ("on" if v else "off") if isinstance(v, bool) else str(v)
+            shown = ("on" if v else "off") if isinstance(v, bool) else f"− {v} +"
             src = self.cfg.origin.get(key)
             src = "set here" if src == settings.FILE else f"from {src}" if src else "default"
-            text = f"   {what:<46} {shown:>4}   {src}"
+            text = f"   {what:<46} {shown:>{self.SETTINGS_VALUE_W}}   {src}"
             lines.append((text, "\x1b[0;30;43m" if i == c.settings_idx else ""))
         lines += [("", ""),
-                  (" a click or Enter changes a row · ↑↓ · q closes", ""),
+                  (" a click or Enter changes a row · − + or ←→ step a number, a digit "
+                   "sets it · ↑↓ · q closes", ""),
                   (f" kept in {cfgmod.home_path(str(settings.path()))}, which wins over "
                    "config.py", "\x1b[0;90m")]
         if c.settings_msg:
@@ -1245,10 +1261,19 @@ class Brain:
             out.append(f"\x1b[{y + 1};1H{attr or chr(27) + '[0m'}{fit(text, c.cols)}\x1b[0m")
         return out
 
-    def change_setting(self, c: Client, i: int) -> None:
-        """Step setting i to its next value: at once, and kept in the panel's file."""
+    def change_setting(self, c: Client, i: int, value=None) -> None:
+        """Set setting i to value (by default its next one, round to the first after the
+        last): at once, and kept in the panel's file."""
         key, fieldname, _what, _values = settings.ROWS[i]
-        value = settings.step(key, getattr(self.cfg, fieldname))
+        if value is None:
+            value = settings.step(key, getattr(self.cfg, fieldname))
+        now = getattr(self.cfg, fieldname)
+        if value == now and type(value) is type(now):          # at an end already
+            end = ("" if not settings.numeric(key) else
+                   ", the most here; more in config.py" if value >= max(_values) else
+                   ", the least" if value <= min(_values) else "")
+            c.settings_msg = f"{key} = {value!r}{end}"
+            return
         setattr(self.cfg, fieldname, value)
         if key == "SHOW_WIDGETS":
             self.widgets_shown = None             # prefix S's choice gives way to this one
@@ -1607,7 +1632,11 @@ class Brain:
                 i = ev.y - self.SETTINGS_TOP
                 if 0 <= i < n:
                     c.settings_idx = i
-                    self.change_setting(c, i)
+                    key, fieldname = settings.ROWS[i][:2]
+                    if d := self.settings_arrow(i, ev.x):    # − or +: one down or up
+                        self.change_setting(c, i, settings.nudge(key, getattr(self.cfg, fieldname), d))
+                    else:
+                        self.change_setting(c, i)
                 else:
                     c.mode = None
             self.schedule_render()
@@ -1939,6 +1968,18 @@ class Brain:
                 c.settings_idx = min(n - 1, c.settings_idx + 1)
             elif data in (b"\r", b"\n", b" "):
                 self.change_setting(c, c.settings_idx)
+            elif data in LESS or data in MORE:
+                key, fieldname = settings.ROWS[c.settings_idx][:2]
+                self.change_setting(c, c.settings_idx, settings.nudge(
+                    key, getattr(self.cfg, fieldname), -1 if data in LESS else 1))
+            elif (len(data) == 1 and data.isdigit()
+                  and settings.numeric(key := settings.ROWS[c.settings_idx][0])):
+                values = settings.ROWS[c.settings_idx][3]
+                if int(data) in values:
+                    self.change_setting(c, c.settings_idx, int(data))
+                else:
+                    c.settings_msg = (f"{key}: {min(values)} to {max(values)} here; "
+                                      "more in config.py")
             elif data in (b"\x1b", b"q", bytes([c.prefix])):
                 c.mode = None
             self.schedule_render()
