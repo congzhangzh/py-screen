@@ -15,8 +15,8 @@ import importlib.metadata
 import subprocess
 from pathlib import Path
 
-MOTTO = "many windows, one Brahman"
-SLOGAN = f"{MOTTO} · by CZ, an engineer near the magnet"
+MOTTO = "many agent teams, one Brahman"
+SLOGAN = f"{MOTTO} · by CZ, an engineer for engineers, near the magnet"
 
 
 def _git(repo: Path, *args: str) -> str:

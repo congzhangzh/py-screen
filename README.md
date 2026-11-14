@@ -226,7 +226,7 @@ with the buttons, the windows in no group and the widgets:
  product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy   3 dbg-product-a-g1 busy  4 comp-server-g4 free  5 edu-product-a-g1 free
             6 po-product-a-g3 #374 free  7 rev-review-g3 free  8 comp-client-g1 #374 busy
  product-b  2 po-product-b-g8 free  9 comp-sync-g1 free
- pys  +  ▾  ?  10 po-pys-g1 groups busy                    many windows, one Brahman                    15.81  11-14 03:52
+ pys  +  ▾  ?  10 po-pys-g1 groups busy                  many agent teams, one Brahman                  15.81  11-14 03:52
 ```
 
 It grows as soon as a tab would not fit whole and goes back only when a window opens or
@@ -249,7 +249,8 @@ uses**: your config and its drop-ins, the skills linked into Claude Code and whe
 the pys hooks in Claude Code's `settings.json`, this pys's code and the Python that runs it;
 `✓` there, `⚠` another install's, `✗` missing (`pys setup` adds it). The title bar of the
 settings and of the help says which pys this is, `20261113.3 · 1a2b3c4` (a checkout says
-`dev` and its commit), and who made it: *many windows, one Brahman*. The same motto sits dim
+`dev` and its commit), its motto and who made it: *many agent teams, one Brahman · by CZ, an
+engineer for engineers, near the magnet*. The motto alone sits dim
 in the status line's blank space between the tabs and the widgets, only when it fits whole;
 the tabs take that room first (`SLOGAN = False`, or the panel, turns it off).
 
