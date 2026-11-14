@@ -71,6 +71,9 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         t.send(b"\x1do")                                  # prefix o
         t.wait_for(" py-screen settings")
         assert "from config.py" in t.text()               # STATUS_LINES' row says where
+        rows = t.text().splitlines()[2:2 + len(settings.ROWS)]
+        ends = {max(r.find("   default"), r.find("   from "), r.find("   set here")) for r in rows}
+        assert len(ends) == 1, rows                       # every value ends in one column
         assert " Files pys uses" in t.text() and "✓ config" in t.text()
         assert re.search(r"(dev|\d{8}\.\d+) · [0-9a-f]{7}", t.text().splitlines()[0])  # version
         assert "this pys's code" in t.text()

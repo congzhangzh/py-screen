@@ -1236,7 +1236,8 @@ class Brain:
     # ---- the settings panel ---------------------------------------------------------
     SETTINGS_TOP = 2                      # the panel's first setting row on the screen
     SETTINGS_VALUE_W = 7                  # its value column: "on", "off", "− 3 +", "− 12 +"
-    SETTINGS_VALUE_X = 3 + 46 + 1         # where that column starts
+    SETTINGS_WHAT_W = max(width(r[2]) for r in settings.ROWS)   # the longest "what it is"
+    SETTINGS_VALUE_X = 3 + SETTINGS_WHAT_W + 1                   # where the value starts
 
     def settings_arrow(self, i: int, x: int) -> int:
         """-1 / +1 if column x of setting row i is on its − / + (or the cell beside it: a
@@ -1279,7 +1280,8 @@ class Brain:
             shown = ("on" if v else "off") if isinstance(v, bool) else f"− {v} +"
             src = self.cfg.origin.get(key)
             src = "set here" if src == settings.FILE else f"from {src}" if src else "default"
-            text = f"   {what:<46} {shown:>{self.SETTINGS_VALUE_W}}   {src}"
+            pad = " " * (self.SETTINGS_WHAT_W - width(what))   # by cells, not chars
+            text = f"   {what}{pad} {shown:>{self.SETTINGS_VALUE_W}}   {src}"
             lines.append((text, "\x1b[0;30;43m" if i == c.settings_idx else ""))
         lines += [("", ""),
                   (" a click or Enter changes a row · − + or ←→ step a number, a digit "
