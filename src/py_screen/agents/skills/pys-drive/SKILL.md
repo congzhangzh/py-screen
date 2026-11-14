@@ -51,6 +51,8 @@ pys-agents team              # your group's windows and their roles: who is the 
 `pys group` prints your window's group; `pys group --wid N <name>` sets another's (a release
 manager for its members). Find your product owner or release manager with `pys-agents team`,
 not by guessing from titles: an area's name (`comp-ui-…`) doesn't say which product it is in.
+A member that serves every product (an edu for all of them) joins `shared` instead
+(`pys group shared`): it is then in every group's `pys-agents team`, marked shared.
 
 ## See what runs where
 

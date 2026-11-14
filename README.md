@@ -224,12 +224,17 @@ under its name), then a line `others` for the windows in no group, and pys's own
 last, with no window on it: the buttons, the motto and its maker, the widgets:
 
 ```
- product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy  3 dbg-product-a-g1 busy  4 comp-server-g4 free  5 edu-product-a-g1 free
-            6 po-product-a-g3 #374 free  7 rev-review-g3 free  8 comp-client-g1 #374 busy
+ product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy  3 dbg-product-a-g1 busy  4 comp-server-g4 free  6 po-product-a-g3 #374 free
+            7 rev-review-g3 free  8 comp-client-g1 #374 busy
  product-b  2 po-product-b-g8 free  9 comp-sync-g1 free
- others     10 po-pys-g1 groups busy
+ shared     5 edu-all-g1 free  others│ 10 po-pys-g1 groups busy
  pys  +  ▾  ?             many agent teams, one Brahman · by CZ, an engineer for engineers, near the magnet             15.81  11-14 03:52
 ```
+
+A window that serves every product, such as one edu for all of them, goes in the group
+`shared` (`pys group --wid 5 shared`). It shares a line with the windows in no group, first,
+then `others│`; it is drawn once, not under every group, and `pys-agents team` lists it in
+every group's team, marked shared.
 
 Each piece of pys's row can go: `BUTTONS = False`, `SLOGAN = False`, `SHOW_WIDGETS = False`
 (or their rows in the settings). `GROUPS = False` turns the product lines off, for one who

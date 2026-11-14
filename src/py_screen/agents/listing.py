@@ -120,6 +120,9 @@ def role(title: str | None) -> str | None:
     return first.split("-", 1)[0] or None if "-" in first else None
 
 
+SHARED = "shared"   # the group of the windows that serve every group (brain.SHARED)
+
+
 def cmd_team(a) -> int:
     g = a.group
     if g is None:
@@ -131,8 +134,13 @@ def cmd_team(a) -> int:
                   file=sys.stderr)
             return 1
     live = {r["window"]: r for r in agents() if r["window"] is not None}
+    # the group's own windows, then those that serve every group (pys group shared: an
+    # edu for all products), marked shared
+    ws = windows()
     rows = [{"window": w["wid"], "role": role(w.get("name")), "title": w.get("name"),
-             "agent": live.get(w["wid"])} for w in windows() if w.get("group") == g]
+             "agent": live.get(w["wid"]), "shared": w.get("group") != g}
+            for w in [w for w in ws if w.get("group") == g] +
+            ([w for w in ws if w.get("group") == SHARED] if g != SHARED else [])]
     if a.json:
         print(json.dumps({"group": g, "windows": rows}, indent=1, ensure_ascii=False))
         return 0
@@ -141,7 +149,8 @@ def cmd_team(a) -> int:
         return 0
     print(f"group {g}:")
     table(("WIN", "ROLE", "TITLE", "AGENT"), [(
-        str(r["window"]), r["role"] or "-", (r["title"] or "-")[:28],
+        str(r["window"]), (r["role"] or "-") + (" (shared)" if r["shared"] else ""),
+        (r["title"] or "-")[:28],
         f"claude {ag['name'] or (ag['session'] or '')[:8]} ({ag['state'] or '-'})"
         if (ag := r["agent"]) else "-") for r in rows])
     return 0
@@ -290,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--group", help="only the windows of this product group")
     p.set_defaults(f=cmd_where)
-    p = sp.add_parser("team", help="the windows of a product group, with their roles")
+    p = sp.add_parser("team", help="the windows of a product group, with their roles (and the shared ones)")
     p.add_argument("--group", help="default: the group of the window this runs in")
     p.add_argument("--json", action="store_true")
     p.set_defaults(f=cmd_team)

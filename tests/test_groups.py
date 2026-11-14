@@ -105,6 +105,17 @@ def test_team_lists_a_group_with_roles():
         got = json.loads(r.stdout)
         assert got["group"] == "product-a"
         assert [(w["window"], w["role"]) for w in got["windows"]] == [(a, "po"), (c, "rel")]
+        # a window in the group "shared" (an edu for every product) is in every team
+        sess.pys("new")
+        d = max(w["wid"] for w in ls(sess)["windows"])
+        sess.pys("title", "--wid", str(d), "edu-all-g1 free")
+        sess.pys("group", "--wid", str(d), "shared")
+        for g in ("product-a", "product-b"):
+            r = subprocess.run(team + ["--group", g, "--json"], env=sess.env,
+                               capture_output=True, text=True, timeout=30, check=True)
+            rows = json.loads(r.stdout)["windows"]
+            assert (rows[-1]["window"], rows[-1]["role"], rows[-1]["shared"]) == (d, "edu", True)
+            assert not any(w["shared"] for w in rows[:-1])
         # from inside a window: its own group
         env = dict(sess.env, PYS_WINDOW=str(b), PYS_SESSION=str(sess.dir))
         r = subprocess.run(team, env=env, capture_output=True, text=True, timeout=30, check=True)
@@ -168,6 +179,36 @@ def test_windows_in_no_group_get_a_line_and_pys_row_holds_none():
         wait(lambda: pane_h(sess) == 20 - 2, what=lambda: t.text())   # the plain flow
         assert "product-a" not in t.text().splitlines()[-2]
         assert sess.pys("group", "--wid", str(a)).strip() == "product-a"   # kept
+    finally:
+        t.close()
+        sess.kill()
+
+
+def test_shared_and_others_share_a_line():
+    """The windows of the group "shared" (they serve every product) and those in no group
+    take one line: shared first, then others│; each window once, never under every group."""
+    sess = Session("grpshared")
+    t = Term(PYS + ["attach"], sess.env, 140, 20)
+    try:
+        t.wait_for("$ ")
+        a, b, c = three_windows(sess)
+        sess.pys("new")
+        d = max(w["wid"] for w in ls(sess)["windows"])          # d: in no group
+        sess.pys("group", "--wid", str(c), "shared")
+        for w in (a, b, c, d):
+            sess.pys("title", "--wid", str(w), f"member-of-a-product-with-a-long-name-{w}")
+        wait(lambda: pane_h(sess) == 20 - 4, what=lambda: t.text())   # a, b, shared+others, pys
+        lines = t.text().splitlines()
+        assert lines[-4].startswith(" product-a ") and lines[-3].startswith(" product-b ")
+        tail = lines[-2]
+        assert tail.startswith(" shared ")
+        assert tail.index(f" {c} ") < tail.index(" others│") < tail.index(f" {d} ")
+        assert sum(l.count(f" {c} member") for l in lines) == 1         # drawn once
+        assert lines[-1].startswith(" pys  +  ▾  ? ")
+
+        sess.pys("group", "--wid", str(d), "product-b")                 # no loose window left
+        wait(lambda: " others│" not in t.text(), what=lambda: t.text())
+        assert t.text().splitlines()[-2].startswith(" shared ")
     finally:
         t.close()
         sess.kill()
