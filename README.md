@@ -4,13 +4,30 @@
 splits that keep running when you detach, and a server you can restart, with new code or a
 new config, without losing a single shell.
 
+**1. Restart it, flood it: nothing is lost.** A window floods two million lines, a split
+runs a clock, and `pys reload` restarts pys's brain while the clock keeps ticking:
+
 ![A window floods two million lines, a split runs a clock, the window list opens, and `pys reload` restarts the brain while the clock keeps ticking](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo.v2.gif)
 
-With AI agents: `pys-agents` shows which window runs which Claude Code session, and after
-`pys kill` (or a crash) `pys-sessions restore` opens them all again, each with its session and
-folder ([For AI agents](#for-ai-agents)):
+**2. Your agents come back.** `pys-agents` shows which window runs which Claude Code
+session, and after `pys kill` (or a crash) `pys-sessions restore` opens them all again, each
+with its session and folder ([For AI agents](#for-ai-agents)):
 
 ![Two agents in pys windows; pys-agents lists them; pys kill ends everything; pys-sessions restore opens both again, each with its session and folder](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-agents.v3.gif)
+
+**3. Many agent teams, one screen.** Each window joins its product's group (`pys group
+product-a`); once one row no longer holds the tabs, each product gets a line of its own,
+a teacher for every product sits in `shared`, and `pys-agents team` tells a member who is in
+its team and in which window ([Product groups](#product-groups)):
+
+![Agents of two products join their groups; the status line gives each product a line of its own, the shared teacher a line with the windows in no group; pys-agents team lists product-b's team with roles; pys group --list](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-teams.v1.gif)
+
+**4. Change it without a config file.** Prefix `o`, or a click on ` pys `, opens the
+settings: here the product lines go off and on, the status rows step `− 1 +` to 3, and the
+caption line under a window goes away; each change applies at once and is kept
+([Settings](#settings)):
+
+![The settings panel: product groups off (the plain flow of tabs) and on again, the status rows stepped down to 1 and up to 3, the caption line turned off; every file pys uses is listed with a check mark](https://raw.githubusercontent.com/congzhangzh/py-screen/main/docs/demo-settings.v2.gif)
 
 A terminal workspace of my own, in Python: not a clone of screen or tmux, built for fun,
 made more powerful and improved by daily use. The design is in [`spec/`](https://github.com/congzhangzh/py-screen/tree/main/spec/); the
@@ -39,6 +56,15 @@ ready-to-use bundle per system, with its own Python inside: unpack it and run `b
   readable and writable from outside. An app's OSC 52 copy reaches your clipboard.
   For Claude Code there is more: `pys-agents` shows which window runs which session, and
   `pys-sessions` brings them all back after pys died (see [For AI agents](#for-ai-agents)).
+- **Many agent teams on one screen.** `pys group` puts each window in its product's group;
+  the status line gives each product a line of its own when one row no longer holds them,
+  `shared` holds the windows that serve every product, and `pys-agents team` lists a
+  member's team with each one's role and window. A tab turns red when its agent asks you
+  something and green when its turn ends.
+- **Friendly to the mouse and to newcomers.** Click a tab, the `+ ▾ ?` buttons (new window,
+  the window list, the help), drag a separator; the settings panel (prefix `o`, or a click on
+  ` pys `) changes the status line, the groups, the captions and the mouse at once, with no
+  file to edit, and lists every file pys uses.
 - **Configured in Python.** `~/.config/pys/config.py` adds status widgets and key bindings
   (`pys sample-config` prints a starting point).
 - **Linux, macOS and Windows** (ConPTY), with wheels for six systems, each one tested on
@@ -656,10 +682,13 @@ uv run pytest            # the suite, about a minute
 Every push and pull request runs the suite on Linux and macOS and the RPC smoke test on Windows
 ([`ci.yml`](https://github.com/congzhangzh/py-screen/blob/main/.github/workflows/ci.yml)).
 A commit's subject says what changed for a user; it is what the release notes list.
-The demo above is recorded from [`docs/demo.tape`](https://github.com/congzhangzh/py-screen/blob/main/docs/demo.tape)
-with [vhs](https://github.com/charmbracelet/vhs): `docs/record-demo.sh` runs it in a clean
-environment, as a made-up user in a session of its own. A new take gets a new version
-(`demo.v3.gif`) beside the old one.
+The demos at the top are recorded with [vhs](https://github.com/charmbracelet/vhs) from the
+tapes in [`docs/`](https://github.com/congzhangzh/py-screen/tree/main/docs):
+`docs/record-demo.sh` runs `demo.tape` in a clean environment, as a made-up user in a session
+of its own; `docs/record-demo-agents.sh [docs/<tape>]` runs `demo-agents.tape`,
+`demo-teams.tape` or `demo-settings.tape` in a container (user and host `demo`, pys built from
+the checkout, stand-in agents). A new take gets a new version (`demo.v3.gif`) beside the old
+one.
 
 ## License
 

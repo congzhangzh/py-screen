@@ -1,5 +1,5 @@
 #!/bin/sh
-# A stand-in for Claude Code, for the recorded demo only (docs/demo-agents.tape): it writes
+# A stand-in for Claude Code, for the recorded demos only (docs/demo-*.tape in a container): it writes
 # what Claude Code writes (its session file, a transcript line with the context it held),
 # names its window the way an agent does, and waits. No model, no account, nothing real.
 set -e
@@ -22,7 +22,7 @@ trap 'rm -f "$home/sessions/$$.json"' EXIT
 case $name in
     reviewer) title="review PR 42" ;;
     builder) title="build fix" ;;
-    *) title=$name ;;
+    *) title="$name free" ;;          # a team member, as the team rule names it
 esac
 pys title --owner $$ "$title"
 printf '\n  \033[1;38;5;173m✻ stand-in agent\033[0m  %s\n  session %s\n  folder  %s\n\n  waiting for you…\n' \
