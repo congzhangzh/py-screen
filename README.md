@@ -427,12 +427,17 @@ pys setup --yes    # do it; running it again is safe
    save`, below); a config of your own is kept, a copy first, and `ON_CHANGE` is added only
    when it has none;
 2. the skills `pys-drive` and `pys-restore`, linked into Claude Code's `skills` folder;
-3. a `SessionStart` hook in Claude Code's `settings.json` (a copy of it first): every claude
+3. a rule, `rules/pys.md` in Claude Code's folder: how to work in a pys window (name it,
+   look before you type, never `pys kill`), a file you can read, loaded by every session (a
+   skill is read only when a task calls for it). Running setup again brings it up to date;
+   a `pys.md` that is not pys's is left as it is. While the rule is there, the hook below
+   only adds the window's number;
+4. a `SessionStart` hook in Claude Code's `settings.json` (a copy of it first): every claude
    that starts in a pys window is told, in a few lines, that it is in pys, which window, how
    to name it, how to look before it types, never to `pys kill`, and how to run pys from this
    install; outside pys it says nothing. `python -m py_screen.agents.instructions --show`
    prints the text. A skill is read when a task calls for it; these lines are always there.
-4. hooks for `Notification`, `Stop`, `UserPromptSubmit` and `SessionEnd`
+5. hooks for `Notification`, `Stop`, `UserPromptSubmit` and `SessionEnd`
    (`python -m py_screen.agents.attn`): a claude's tab turns red when it asks you (a
    permission prompt), green when its turn ends, and back when you answer. Claude's idle
    reminder is left out: the turn's end marked it already, and once you looked it stays

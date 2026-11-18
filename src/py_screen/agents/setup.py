@@ -6,7 +6,10 @@ tool or the bundle. A dry run by default (what it would do); --yes does it.
      own, config.d/50-pys-setup.py, and only when your config has no ON_CHANGE yet. Your
      config.py is never edited
   2. the agent skills (pys-drive, pys-restore) linked into Claude Code's skills folder
-  3. hooks in Claude Code's settings.json (a copy of it first): SessionStart, so every
+  3. a rule, Claude Code's rules/pys.md: how to work in a pys window, a file you can read,
+     which every session loads (a session reads a skill only when a task calls for it);
+     brought up to date by running setup again, never written over when it is not pys's
+  4. hooks in Claude Code's settings.json (a copy of it first): SessionStart, so every
      session that starts in a pys window gets a few lines on how to behave there
      (instructions.py); Notification, Stop, UserPromptSubmit and SessionEnd, so its window's
      tab turns red when it asks you, green when its turn ended, and back when you answer
@@ -67,9 +70,29 @@ def step_config(do: bool) -> str:
 def step_skills(do: bool) -> str:
     dest = claude.home() / "skills"
     if not do:
+        names = sorted(q.parent.name for q in listing.SKILLS.glob("*/SKILL.md"))
+        if all(listing.is_link(dest / n) and
+               os.path.realpath(dest / n) == os.path.realpath(listing.SKILLS / n) for n in names):
+            return f"skills: {' and '.join(names)} are linked into {dest} already"
         return f"skills: link pys-drive and pys-restore into {dest}"
     listing.cmd_skills(type("A", (), {"install": True, "dir": str(dest)})())
     return f"skills: done (above) in {dest}"
+
+
+def step_rule(do: bool) -> str:
+    p, state = instructions.rule_path(), instructions.rule_state()
+    if state == "ok":
+        return f"rule: {p} is up to date"
+    if state == "mine":
+        return f"rule: ⚠ {p} is there and not pys's; left as it is"
+    what = "bring" if state == "old" else "write"
+    if do:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+        tmp.write_text(instructions.rule_text(), encoding="utf-8")
+        os.replace(tmp, p)
+    return (f"rule: {what} {p}" + (" up to date" if state == "old" else "") +
+            ": how to work in a pys window, for every Claude Code session")
 
 
 def hook_command(module: str) -> str:
@@ -137,12 +160,13 @@ def main(argv: list[str] | None = None) -> int:
         print("  ⚠ this pys runs from uv's cache (uvx): the skills and the hook would point "
               "into it,\n    and `uv cache clean` empties it. `uv tool install py-screen`, "
               "then `pys setup`, lasts.")
-    for step in (step_config, step_skills, step_hook):
+    for step in (step_config, step_skills, step_rule, step_hook):
         print("  " + step(do))
     if not do:
         print("a dry run; add --yes to do it")
         return 0
-    print("then: a new claude in a pys window gets the instructions; `pys doctor` checks the rest")
+    print("then: a new claude reads the rule, and in a pys window its number; `pys doctor` "
+          "checks the rest")
     return 0
 
 

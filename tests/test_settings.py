@@ -40,6 +40,22 @@ def test_the_about_line():
         assert sha in about.version() and "0.1.0" not in about.version()
 
 
+def test_the_files_list(tmp_path, monkeypatch):
+    """What "Files pys uses" lists, in order: the config, Claude Code's skills, pys's rule,
+    its hooks, this pys's code and the Python that runs it."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.setenv("PYS_CONFIG", str(tmp_path / "cfg" / "config.py"))
+    got = settings.files()
+    kinds = [k for _, k, _, _ in got]
+    assert kinds[0] == "config" and kinds[-2:] == ["program", "python"]
+    assert kinds.index("skill") < kinds.index("rule") < kinds.index("hooks")
+    assert ("✗", "missing: pys setup writes it") in [(s, w) for s, k, _, w in got if k == "rule"]
+    from py_screen.agents import instructions
+    instructions.rule_path().parent.mkdir(parents=True)
+    instructions.rule_path().write_text(instructions.rule_text(), encoding="utf-8")
+    assert [s for s, k, _, _ in settings.files() if k == "rule"] == ["✓"]
+
+
 def test_step():
     assert settings.step("BUTTONS", True) is False
     assert settings.step("STATUS_LINES", 2) == 3 and settings.step("STATUS_LINES", 5) == 1
@@ -76,7 +92,8 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         assert len(ends) == 1, rows                       # every value ends in one column
         assert " Files pys uses" in t.text() and "✓ config" in t.text()
         assert re.search(r"(dev|\d{8}\.\d+) · [0-9a-f]{7}", t.text().splitlines()[0])  # version
-        assert "this pys's code" in t.text()
+        assert " rule " in t.text()                     # the panel is cut at 20 rows; the
+        # whole list is test_the_files_list's
         t.send(b"\r")                                     # row 1: the buttons, off
         wait(lambda: kept.exists() and "BUTTONS = False" in kept.read_text(),
              what=lambda: t.text())

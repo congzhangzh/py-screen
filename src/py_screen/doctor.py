@@ -151,6 +151,16 @@ def cmd_check() -> int:
             marks = [e for e in attn.EVENTS if attn.MARK not in json.dumps(hooks.get(e, []))]
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             hooked, marks = False, list(attn.EVENTS)
+        rule = instructions.rule_state()
+        if rule == "ok":
+            r.ok(f"every claude reads pys's rule ({instructions.rule_path()})")
+        elif rule == "old":
+            r.note(f"pys's rule {instructions.rule_path()} is another pys's or older: `pys setup`")
+        elif rule == "mine":
+            r.note(f"{instructions.rule_path()} is not pys's: pys leaves it as it is")
+        else:
+            r.note("no pys rule in Claude Code's rules: a claude learns how to work in pys "
+                   "only from the hook; `pys setup`")
         if hooked:
             r.ok("a claude in a pys window gets the pys instructions (SessionStart hook)")
         else:

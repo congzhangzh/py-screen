@@ -131,6 +131,12 @@ def files() -> list[tuple[str, str, str, str]]:
             out.append(("⚠", "skill", home(str(link)), "yours, not pys's: left as it is"))
         else:
             out.append(("✗", "skill", home(str(link)), "not linked: pys setup links it"))
+    from .agents import instructions
+    rp, rule = instructions.rule_path(), instructions.rule_state()
+    out.append({"ok": ("✓", "rule", home(str(rp)), "written by pys setup; every session reads it"),
+                "old": ("⚠", "rule", home(str(rp)), "another pys's or older: pys setup updates it"),
+                "mine": ("⚠", "rule", home(str(rp)), "yours, not pys's: left as it is"),
+                "none": ("✗", "rule", home(str(rp)), "missing: pys setup writes it")}[rule])
     sp = claude.home() / "settings.json"
     try:
         s = json.loads(sp.read_text(encoding="utf-8")) if sp.is_file() else {}

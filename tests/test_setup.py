@@ -27,6 +27,7 @@ def setup(tmp: Path, *args: str, **extra: str) -> str:
 def test_a_dry_run_changes_nothing(tmp_path: Path) -> None:
     out = setup(tmp_path)
     assert "dry run" in out and "write the sample" in out and "add a SessionStart hook" in out
+    assert "rule: write" in out
     assert not (tmp_path / "cfg").exists() and not (tmp_path / "claude").exists()
 
 
@@ -54,8 +55,46 @@ def test_setup_does_it_all_once(tmp_path: Path) -> None:
     again = setup(tmp_path, "--yes")                                  # nothing twice
     assert "ON_CHANGE is set already" in again and "runs this install already" in again
     assert "already linked" in again
+    assert "are linked into" in setup(tmp_path)                        # and a dry run says so
     s2 = json.loads((claude / "settings.json").read_text(encoding="utf-8"))
     assert s2 == s
+
+
+def test_setup_writes_the_rule_and_the_hook_then_points_at_it(tmp_path: Path) -> None:
+    """Claude Code's rules/pys.md: pys's rules in a file every session loads. While it is
+    this install's own, the hook only adds the window's number, so nothing comes twice."""
+    rule = tmp_path / "claude" / "rules" / "pys.md"
+    assert "is there and not pys's" not in setup(tmp_path)          # a dry run writes nothing
+    assert not rule.exists()
+    full = json.loads(hook(tmp_path, PYS_WINDOW="7").stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "title --agent" in full                                    # no rule yet: the hook has it all
+
+    assert "rule: write" in setup(tmp_path, "--yes")
+    text = rule.read_text(encoding="utf-8")
+    assert text.startswith("<!-- written by `pys setup`") and "$PYS_WINDOW" in text
+    for line in full.splitlines()[1:]:                                # the same rules, every one
+        assert line in text
+    assert "rule: " in (again := setup(tmp_path, "--yes")) and "is up to date" in again
+    short = json.loads(hook(tmp_path, PYS_WINDOW="7").stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "window 7" in short and "pys.md" in short and "title --agent" not in short
+    doc = subprocess.run([*PY, "py_screen", "doctor"], env=env_for(tmp_path), capture_output=True,
+                         text=True, encoding="utf-8", timeout=60).stdout
+    assert "every claude reads pys's rule" in doc
+
+    rule.write_text(text.replace("Never", "Do not"), encoding="utf-8")   # an older pys's
+    assert "up to date" in setup(tmp_path, "--yes") and rule.read_text(encoding="utf-8") == text
+    assert "title --agent" not in json.loads(hook(tmp_path, PYS_WINDOW="7").stdout)[
+        "hookSpecificOutput"]["additionalContext"]
+
+
+def test_a_rule_file_of_yours_is_left_alone(tmp_path: Path) -> None:
+    rule = tmp_path / "claude" / "rules" / "pys.md"
+    rule.parent.mkdir(parents=True)
+    rule.write_text("# my own pys notes\n")
+    assert "is there and not pys's" in setup(tmp_path, "--yes")
+    assert rule.read_text() == "# my own pys notes\n"
+    ctx = json.loads(hook(tmp_path, PYS_WINDOW="2").stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "title --agent" in ctx                                     # so the hook says it all
 
 
 def test_setup_never_edits_your_config(tmp_path: Path) -> None:
