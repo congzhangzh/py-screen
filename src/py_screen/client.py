@@ -17,8 +17,9 @@ async def connect() -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     return await platform.connect(proto.brain_sock(), limit=1 << 22)
 
 
-async def attach() -> str:
-    """Attach until detached or the session ends; return the reason."""
+async def attach(guest: bool = False) -> str:
+    """Attach until detached or the session ends; return the reason. A guest never sizes
+    a window another client shows (the brain's size_windows)."""
     term = platform.RawTerm()
     size = term.size
     writer: asyncio.StreamWriter | None = None
@@ -47,7 +48,8 @@ async def attach() -> str:
             writer.write(proto.pack_ctl({"op": "attach", "cols": cols, "rows": rows,
                                          "cwd": os.getcwd(),
                                          "prefix": os.environ.get("PYS_PREFIX"),
-                                         "in_screen": bool(os.environ.get("STY"))}))
+                                         "in_screen": bool(os.environ.get("STY")),
+                                         "guest": guest}))
             reason = "lost"
             try:
                 while True:

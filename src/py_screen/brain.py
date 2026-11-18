@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 import zlib
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -190,6 +191,8 @@ class Window:
     # so what you are reading stays put while the app writes on.
     scroll: int = 0
     seen: int = 0
+    home: tuple[int, int] | None = None   # (cols, rows) a normal client gave it; a guest's
+    # size lasts only while a guest alone shows it (size_windows)
     copy: Copy | None = None     # copy mode on this window (prefix [)
     info: str | None = None      # the config's CAPTION text for it; None: its folder
     clip: bytes | None = None    # what its app last copied (OSC 52), for the brain to pass on
@@ -240,6 +243,21 @@ class Window:
 
 
 @dataclass
+class View:
+    """What one client sees: its own layout (splits, and the focused pane, whose window is
+    its current window), its size, its status rows, its last window (prefix Space). Each
+    attached client has one, so switching in one never moves another; with no client the
+    brain keeps the last one's (Brain.home), and a new client starts from a copy of the
+    lead's."""
+    layout: Layout = field(default_factory=Layout)
+    cols: int = 80
+    rows: int = 24
+    status_h: int = 1                # the status line's rows (STATUS_LINES at most)
+    status_shrink: bool = False      # it may give a row back at the next fit
+    last: int | None = None
+
+
+@dataclass
 class Client:
     writer: asyncio.StreamWriter
     prefix: int = 0x01
@@ -259,8 +277,12 @@ class Client:
     help_hits: dict[tuple[int, int], int] = field(default_factory=dict)  # (row, help column) → wid
     help_cw: int = 80             # the help's column width, to map a click to its column
     help_page: int = 0
-    cols: int = 80                # this client's terminal; the layout follows the client
-    rows: int = 24                # that was active last, the others see a cropped view
+    cols: int = 80                # this client's terminal: its view's size
+    rows: int = 24
+    view: View = field(default_factory=View)
+    guest: bool = False           # `pys attach --guest`: never sizes a window a normal
+    # client shows (it sees that one cropped)
+    captions: dict = field(default_factory=dict)   # its panes' captions, last frame
     seen: float = 0.0             # when it last attached, resized or typed
     copy_wid: int | None = None   # the window this client's copy mode is on
 
@@ -269,13 +291,11 @@ class Brain:
     def __init__(self) -> None:
         self.wins: dict[int, Window] = {}
         self.order: list[int] = []
-        self.layout = Layout()
-        self.last: int | None = None             # for C-a Space / C-a C-a
+        self.home = View()                       # the view while no client is attached
+        self.v = self.home                       # the view in effect: see use()
+        self.sizer: Client | None = None         # the client whose panes size the windows
         self.widgets_shown: bool | None = None   # prefix S; None: SHOW_WIDGETS decides
         self.clients: list[Client] = []
-        self.cols, self.rows = 80, 24            # outer size; panes share rows - status_h
-        self.status_h = 1                        # the status line's rows (STATUS_LINES at most)
-        self.status_shrink = False               # it may give a row back at the next fit
         self.keeper_w: asyncio.StreamWriter | None = None
         self.pending: dict[str, asyncio.Future] = {}
         self.tag_n = 0
@@ -287,7 +307,6 @@ class Brain:
         self.ready = asyncio.Event()             # replay from the keeper finished
         self.cfg = cfgmod.load_config()
         self.state_path = proto.runtime_dir() / "layout.json"
-        self.captions: dict[int, str] = {}
         self.parse_handle: asyncio.Handle | asyncio.TimerHandle | None = None
         self.last_key = 0.0                      # for KEY_GRACE
         self.guard: dict | None = None           # keys held after the focused window ended
@@ -301,13 +320,65 @@ class Brain:
         self.hook_again = False                  # a change came while ON_CHANGE ran
         self.ending = False                      # pys kill / prefix Q: no more changes
 
+    # ---- views: one per client ------------------------------------------------
+    # The code below works on "the view in effect", self.v: the layout, the size, the
+    # status rows and the last window are its. A client's keys and mouse run in its own
+    # view, its frame is drawn in it, and anything else (a command from outside, a timer)
+    # runs in the lead's: the normal client active last, else the guest active last.
+    layout = property(lambda self: self.v.layout)
+    cols = property(lambda self: self.v.cols)
+    rows = property(lambda self: self.v.rows)
+
+    @property
+    def status_h(self) -> int:
+        return self.v.status_h
+
+    @status_h.setter
+    def status_h(self, h: int) -> None:
+        self.v.status_h = h
+
+    @property
+    def status_shrink(self) -> bool:
+        return self.v.status_shrink
+
+    @status_shrink.setter
+    def status_shrink(self, b: bool) -> None:
+        self.v.status_shrink = b
+
+    @property
+    def last(self) -> int | None:
+        return self.v.last
+
+    @last.setter
+    def last(self, wid: int | None) -> None:
+        self.v.last = wid
+
+    def lead(self) -> Client | None:
+        """The client a command from outside acts for."""
+        return max(self.clients, key=lambda k: (not k.guest, k.seen), default=None)
+
+    def use(self, c: Client | None = None) -> None:
+        """Make c's view the one in effect (by default the lead's, or home with none)."""
+        c = c or self.lead()
+        self.v = c.view if c else self.home
+
+    def views(self) -> list[View]:
+        return [c.view for c in self.clients] or [self.home]
+
+    def shrink_all(self) -> None:
+        """Every view's status line may give a row back (a window came or went)."""
+        for v in self.views():
+            v.status_shrink = True
+        self.status_dirty = True
+
     # ---- small helpers ------------------------------------------------------
     @property
     def current(self) -> int | None:
         return self.layout.focus.wid
 
     def visible(self) -> set[int]:
-        return {p.wid for p in self.layout.panes() if p.wid is not None}
+        """The windows some client shows (or the home view, with none attached)."""
+        return {p.wid for v in self.views() for p in v.layout.panes() if p.wid is not None}
 
     def focused_window(self) -> Window | None:
         return self.wins.get(self.current) if self.current is not None else None
@@ -373,23 +444,29 @@ class Brain:
         w = Window.new(x["wid"], x["pid"], x["cmd"], x["cols"], x["rows"], self.cfg.scrollback)
         self.wins[w.wid] = w
         self.order.append(w.wid)
-        if self.layout.focus.wid is None and len(self.layout.panes()) == 1:
-            self.layout.focus.wid = w.wid
-        self.status_dirty = self.status_shrink = True
+        w.home = (x["cols"], x["rows"])
+        for v in self.views():
+            if v.layout.focus.wid is None and len(v.layout.panes()) == 1:
+                v.layout.focus.wid = w.wid
+        self.shrink_all()
         self.changed()
         return w
 
     def remove_window(self, wid: int) -> None:
         was_focused = self.layout.focus.wid == wid
-        self.status_shrink = True
+        self.shrink_all()
         self.wins.pop(wid, None)
         if wid in self.order:
             self.order.remove(wid)
-        if self.last == wid:
-            self.last = None
-        for p in self.layout.panes():
-            if p.wid == wid:
-                p.wid = self.hidden_candidate()
+        v0 = self.v
+        for v in self.views():                    # gone from every client's view
+            self.v = v
+            if self.last == wid:
+                self.last = None
+            for p in self.layout.panes():
+                if p.wid == wid:
+                    p.wid = self.hidden_candidate()
+        self.v = v0
         if not self.order:
             log("last window exited; shutting down")
             if not self.ending:                   # after a kill: its record stays as it is
@@ -446,7 +523,8 @@ class Brain:
         return True
 
     def hidden_candidate(self) -> int | None:
-        vis = self.visible()
+        """A window this view doesn't show: its last one, else the newest."""
+        vis = {p.wid for p in self.layout.panes() if p.wid is not None}
         if self.last is not None and self.last in self.wins and self.last not in vis:
             return self.last
         return next((w for w in reversed(self.order) if w not in vis), None)
@@ -581,46 +659,82 @@ class Brain:
         cols, rows = size or ((f.w, f.text_h) if f.w else (self.cols, self.rows - 2))
         self.to_keeper(proto.pack_ctl({"op": "spawn", "cmd": cmd, "cwd": cwd, "tag": tag,
                                        "cols": cols, "rows": rows}))
-        return await asyncio.wait_for(fut, 5)
+        v = self.v                                # another client may run meanwhile
+        try:
+            return await asyncio.wait_for(fut, 5)
+        finally:
+            self.v = v
 
     # ---- layout, selection ---------------------------------------------------
-    def set_size(self, cols: int, rows: int) -> None:
-        if (cols, rows) != (self.cols, self.rows):
-            self.cols, self.rows = cols, rows
-            self.status_shrink = True
+    def activate(self, c: Client) -> None:
+        """c attached, resized or typed: its view takes its terminal's size, and it becomes
+        the view in effect. The windows' sizes follow the normal client active last (as
+        tmux's window-size latest), so they change only when that client or its size does."""
+        c.seen = time.monotonic()
+        self.use(c)
+        v, sizer = c.view, self.size_lead()
+        if (v.cols, v.rows) != (c.cols, c.rows):
+            v.cols, v.rows = c.cols, c.rows
+            v.status_shrink = True
             self.fit_status()
             self.relayout()
-
-    def activate(self, c: Client) -> None:
-        """c attached, resized or typed: the layout takes its size (as tmux's
-        window-size latest). Every other client gets a view cropped to its own terminal."""
-        c.seen = time.monotonic()
-        self.set_size(c.cols, c.rows)
+        elif sizer is not self.sizer:
+            self.relayout()
 
     def follow_latest(self) -> None:
-        """The active client left: the size goes to the one active most recently."""
-        if self.clients:
-            c = max(self.clients, key=lambda k: k.seen)
-            self.set_size(c.cols, c.rows)
+        """A client left: the windows take their sizes from the clients still here (a
+        window a guest alone showed goes back to its home size)."""
+        self.use()
+        self.relayout()
+
+    def size_lead(self) -> Client | None:
+        return max((k for k in self.clients if not k.guest), key=lambda k: k.seen, default=None)
 
     def relayout(self) -> None:
-        """Place panes, give each shown window its pane's size, redraw, save. Every
-        change of focus and every attach comes here, so this is where a window's
-        attention mark goes when you get to it."""
-        self.saw_focused()
-        self.layout.place(self.cols, self.rows - self.status_h)
-        panes = self.layout.panes()
-        bare = not self.cfg.captions and len(panes) == 1   # a split keeps them: they part
-        for p in panes:                           # stacked panes and show the focus
-            p.bare = bare
-        for p in panes:
-            w = self.wins.get(p.wid) if p.wid is not None else None
-            if w and (w.term.columns, w.term.lines) != (p.w, p.text_h):
-                w.term.resize(p.text_h, p.w)
-                self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
-                                               "cols": p.w, "rows": p.text_h}))
+        """Place every view's panes, give each window its size (size_windows), redraw,
+        save. Every change of focus and every attach comes here, so this is where a
+        window's attention mark goes when you get to it."""
+        v0 = self.v
+        for v in self.views():
+            self.v = v
+            self.saw_focused()
+            self.layout.place(self.cols, self.rows - self.status_h)
+            panes = self.layout.panes()
+            bare = not self.cfg.captions and len(panes) == 1   # a split keeps them: they
+            for p in panes:                       # part stacked panes and show the focus
+                p.bare = bare
+        self.v = v0
+        self.size_windows()
         self.mark_all_stale()
         self.save_state()
+
+    def size_windows(self) -> None:
+        """A window's size is its pane's in the client that shows it, normal clients
+        before guests, the one active last first; a guest never sizes a window a normal
+        client shows (it sees it cropped). A window no normal client shows goes back to
+        its home size, the last a normal client gave it, at once, shown or not: so a
+        guest that leaves or moves on leaves no window at its size."""
+        self.sizer = self.size_lead()
+        want: dict[int, tuple[int, int, bool]] = {}
+        clients = sorted(self.clients, key=lambda k: (not k.guest, k.seen), reverse=True)
+        for layout, guest in ([(k.view.layout, k.guest) for k in clients] or
+                              [(self.home.layout, False)]):
+            for p in layout.panes():
+                if p.wid in self.wins and p.wid not in want:
+                    want[p.wid] = (p.w, p.text_h, guest)
+        for w in self.wins.values():
+            if w.wid in want:
+                cols, rows, guest = want[w.wid]
+                if not guest:
+                    w.home = (cols, rows)
+            elif w.home:
+                cols, rows = w.home
+            else:
+                continue
+            if (w.term.columns, w.term.lines) != (cols, rows) and cols > 0 and rows > 0:
+                w.term.resize(rows, cols)
+                self.to_keeper(proto.pack_ctl({"op": "resize", "wid": w.wid,
+                                               "cols": cols, "rows": rows}))
 
     def select(self, wid: int) -> None:
         """Show wid in the focused pane, or move the focus to the pane already showing it."""
@@ -648,6 +762,16 @@ class Brain:
 
     # ---- state across reloads ------------------------------------------------
     def save_state(self) -> None:
+        """The lead's view (its layout, its last window) and every window's names, marks,
+        groups and order, for the next brain."""
+        v0 = self.v
+        self.use()
+        try:
+            self.save_view()
+        finally:
+            self.v = v0
+
+    def save_view(self) -> None:
         def enc(n):
             if isinstance(n, Pane):
                 return {"pane": n.wid, "focus": n is self.layout.focus}
@@ -742,9 +866,19 @@ class Brain:
         return (c.cols, c.rows) if c else (self.cols, self.rows)
 
     def line(self, t: term.Term, y: int, p: Pane, vc: int | None = None, back: int = 0) -> str:
-        """Pane row y: the term's row y - back (back > 0 reaches into the scrollback)."""
+        """Pane row y: the term's row y + p.off - back (back > 0 reaches into the
+        scrollback)."""
         w = p.w if vc is None else min(p.w, vc - p.x)
-        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y - back, w)
+        return f"\x1b[{p.y + y + 1};{p.x + 1}H" + t.row(y + p.off - back, w)
+
+    def row_off(self, w: Window, p: Pane) -> int:
+        """The rows of w's screen above pane p's top: 0, unless another client gave the
+        window more rows than p has (a guest's view); then the ones that keep its cursor
+        in the pane, so a shell's prompt and what an app types stay in sight."""
+        extra = w.term.lines - p.text_h
+        if extra <= 0 or w.copy or w.scroll:
+            return 0
+        return max(0, min(w.term.cursor[1] - p.text_h + 1, extra))
 
     def shown(self, p: Pane, y: int, vc: int, vr: int) -> bool:
         """Pane row y (the caption is y = p.h - 1) is inside view (vc, vr)."""
@@ -776,7 +910,7 @@ class Brain:
         out = []
         if w:
             s = w.copy.t if w.copy else w.term    # copy mode: the frozen view
-            for y in range(p.text_h if w.copy else min(s.lines, p.text_h)):
+            for y in range(p.text_h if w.copy else min(s.lines - p.off, p.text_h)):
                 if not self.shown(p, y, vc, vr):
                     continue
                 marked = w.copy.render(y - w.scroll, pw) if w.copy else None
@@ -1319,7 +1453,7 @@ class Brain:
         if key == "SHOW_WIDGETS":
             self.widgets_shown = None             # prefix S's choice gives way to this one
         if key in ("STATUS_LINES", "GROUPS"):
-            self.status_shrink = True             # fewer rows may be allowed now
+            self.shrink_all()                     # fewer rows may be allowed now
         try:
             values = settings.read()
             values[key] = value
@@ -1339,50 +1473,70 @@ class Brain:
         self.last_render = time.monotonic()
         if not self.clients:
             return                                # parse later, when someone looks
-        if self.status_dirty and self.fit_status():
-            self.relayout()                       # this frame draws the new layout whole
-        dirty_rows = []
-        whole: list[Pane] = []                    # panes drawn whole: a scrolled view moved
-        for p in self.layout.panes():
-            if p.wid in self.wins:
-                w = self.wins[p.wid]  # type: ignore[index]
-                s = w.term
-                ys = s.take_dirty()
-                self.settle(w)
-                if w.copy:                        # frozen: live output shows when it ends
-                    ys = set()
-                elif w.scroll and ys:             # rows sit lower than the term has them
-                    self.redraw.add(w.wid)
-                if w.wid in self.redraw:
-                    whole.append(p)
-                else:
-                    dirty_rows.append((p, s, sorted(y for y in ys if y < p.text_h)))
+        if self.status_dirty:
+            fit = False
+            for c in self.clients:
+                self.v = c.view
+                fit = self.fit_status() or fit
+            self.use()
+            if fit:
+                self.relayout()                   # this frame draws the new layout whole
+        # What changed in each shown window, taken once for every client that shows it.
+        changed: dict[int, set[int]] = {}
+        whole_w = set(self.redraw)                # drawn whole: a scrolled view moved
+        for wid in self.visible():
+            w = self.wins.get(wid)
+            if w is None:
+                continue
+            ys = w.term.take_dirty()
+            self.settle(w)
+            if w.copy:                            # frozen: live output shows when it ends
+                ys = set()
+            elif w.scroll and ys:                 # rows sit lower than the term has them
+                whole_w.add(wid)
+            changed[wid] = ys
         self.redraw.clear()
+        for c in self.clients:
+            self.v = c.view
+            self.render_client(c, changed, whole_w)
+        self.use()
+        self.status_dirty = False
+
+    def render_client(self, c: Client, changed: dict[int, set[int]], whole_w: set[int]) -> None:
+        """c's frame, in its own view (self.v is c's)."""
+        if c.writer.is_closing():
+            return
+        if c.writer.transport.get_write_buffer_size() > CLIENT_HIGH_WATER:
+            c.stale = True                        # slow client: skip, redraw fully later
+            return
+        vc, vr = c.cols, c.rows
         all_panes = self.layout.panes()
+        dirty_rows, whole_panes = [], []
+        for p in all_panes:
+            w = self.wins.get(p.wid) if p.wid is not None else None
+            if w is None:
+                continue
+            off = self.row_off(w, p)
+            if w.wid in whole_w or off != p.off:  # its rows moved in the pane: all of them
+                p.off = off
+                whole_panes.append(p)
+            else:
+                dirty_rows.append((p, w.term, sorted(y - off for y in changed.get(w.wid, ())
+                                                     if 0 <= y - off < p.text_h)))
         captions = {id(p): self.caption(p) for p in all_panes}
-        recaption = [p for p in all_panes if self.captions.get(id(p)) != captions[id(p)]]
-        self.captions = captions                  # a title or cwd change redraws its caption
-        whole_panes = whole
-        bodies_dirty: dict[tuple[int, int], str] = {}   # one body per view size
-        bodies_full: dict[tuple[int, int], str] = {}
+        recaption = [p for p in all_panes if c.captions.get(id(p)) != captions[id(p)]]
+        c.captions = captions                     # a title or cwd change redraws its caption
 
-        def body_dirty(vc: int, vr: int) -> str:
-            if (vc, vr) not in bodies_dirty:
-                whole = (vc, vr) == (self.cols, self.rows)
-                parts = [self.line(s, y, p, vc) for p, s, ys in dirty_rows for y in ys
-                         if whole or self.shown(p, y, vc, vr)]
-                parts.extend(captions[id(p)] if whole else self.caption(p, vc) for p in recaption
-                             if whole or self.shown(p, p.h - 1, vc, vr))
-                parts.extend(self.pane_full(p, vc, vr) for p in whole_panes)
-                bodies_dirty[(vc, vr)] = "".join(parts)
-            return bodies_dirty[(vc, vr)]
+        def body_dirty() -> str:
+            parts = [self.line(s, y, p, vc) for p, s, ys in dirty_rows for y in ys
+                     if self.shown(p, y, vc, vr)]
+            parts.extend(self.caption(p, vc) for p in recaption if self.shown(p, p.h - 1, vc, vr))
+            parts.extend(self.pane_full(p, vc, vr) for p in whole_panes)
+            return "".join(parts)
 
-        def body_full(vc: int, vr: int) -> str:
-            if (vc, vr) not in bodies_full:
-                bodies_full[(vc, vr)] = ("\x1b[0m\x1b[2J" + "".join(self.pane_full(p, vc, vr)
-                                                                   for p in all_panes)
-                                         + self.separators(vc, vr))
-            return bodies_full[(vc, vr)]
+        def body_full() -> str:
+            return ("\x1b[0m\x1b[2J" + "".join(self.pane_full(p, vc, vr) for p in all_panes)
+                    + self.separators(vc, vr))
 
         fw = self.focused_window()
         f = self.layout.focus
@@ -1396,58 +1550,50 @@ class Brain:
             s = fw.term
             want = {m for m in SYNC_MODES if s.mode(m)}
             x, y = s.cursor
-            cx, cy = min(x, s.columns - 1), min(y, f.text_h - 1)
+            cx, cy = min(x, s.columns - 1, f.w - 1), min(y - f.off, f.text_h - 1)
             if fw.copy:                           # copy mode: its cursor, always shown
                 py = fw.copy.y + fw.scroll
                 if 0 <= py < f.text_h:
                     cursor, show_cursor = (f.x + min(fw.copy.x, f.w - 1), f.y + py), True
-            elif not fw.scroll:                   # scrolled back: no cursor in the history
+            elif not fw.scroll and cy >= 0:       # scrolled back: no cursor in the history
                 cursor, show_cursor = (f.x + cx, f.y + cy), not s.cursor_hidden
-        for c in self.clients:
-            if c.writer.is_closing():
-                continue
-            if c.writer.transport.get_write_buffer_size() > CLIENT_HIGH_WATER:
-                c.stale = True                # slow client: skip, redraw fully later
-                continue
-            vc, vr = c.cols, c.rows
-            overlay = c.mode in ("list", "help", "settings")
-            if overlay:                       # it owns the screen: only its changed rows go out
-                rows = (self.window_list(c) if c.mode == "list" else
-                        self.settings_screen(c) if c.mode == "settings" else self.help_screen(c))
-                rows.append(self.status_line(c))
-                old = [] if c.stale else c.panel or []
-                body = "".join(r for i, r in enumerate(rows) if i >= len(old) or old[i] != r)
-                c.panel, c.stale = rows, False
+        overlay = c.mode in ("list", "help", "settings")
+        if overlay:                               # it owns the screen: only its changed rows go out
+            rows = (self.window_list(c) if c.mode == "list" else
+                    self.settings_screen(c) if c.mode == "settings" else self.help_screen(c))
+            rows.append(self.status_line(c))
+            old = [] if c.stale else c.panel or []
+            body = "".join(r for i, r in enumerate(rows) if i >= len(old) or old[i] != r)
+            c.panel, c.stale = rows, False
+        else:
+            if c.panel is not None:               # an overlay closed: bring back what it covered
+                c.panel, c.stale = None, True
+            if c.stale:
+                body = body_full() + self.status_line(c)
+                c.stale = False
             else:
-                if c.panel is not None:       # an overlay closed: bring back what it covered
-                    c.panel, c.stale = None, True
-                if c.stale:
-                    body = body_full(vc, vr) + self.status_line(c)
-                    c.stale = False
-                else:
-                    body = body_dirty(vc, vr) + (self.status_line(c) if self.status_dirty else "")
-            cur = ""
-            if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - self.status_h:
-                cur = f"\x1b[{cursor[1] + 1};{cursor[0] + 1}H" + ("\x1b[?25h" if show_cursor else "")
-            mw = overlay_mouse if overlay else want | mouse_want
-            # Resets before sets. Mouse tracking 1000 / 1002 / 1003 is one setting in
-            # xterm and the terminals that copy it (xterm.js, hterm: most phone apps):
-            # resetting any of them turns tracking off, whichever is on. Going from 1002
-            # to 1003 (a window whose app takes every motion, like Claude Code) as
-            # "?1003h ?1002l" left the mouse off, and the terminal then turned a wheel
-            # or a touch drag into arrow keys until the next attach.
-            modes_s = "".join(f"\x1b[?{m}l" for m in sorted(c.modes - mw))
-            modes_s += "".join(f"\x1b[?{m}h" for m in sorted(mw - c.modes))
-            c.modes = mw
-            if overlay and not body and not modes_s:
-                continue                      # nothing it shows changed: leave the terminal be
-            # ?7l: no autowrap in the client's terminal while attached (the client turns
-            # it back on when it leaves). Every row is placed with CUP, so pys never
-            # needs a wrap, and a row that runs one cell too wide (a character the
-            # terminal draws wider than wcwidth says, like ⚠️) can't scroll the screen.
-            frame = "\x1b[?2026h\x1b[?25l\x1b[?7l" + modes_s + body + cur + "\x1b[?2026l"
-            c.writer.write(proto.pack(proto.DATA, 0, frame.encode()))
-        self.status_dirty = False
+                body = body_dirty() + (self.status_line(c) if self.status_dirty else "")
+        cur = ""
+        if cursor and not overlay and cursor[0] < vc and cursor[1] < vr - self.status_h:
+            cur = f"\x1b[{cursor[1] + 1};{cursor[0] + 1}H" + ("\x1b[?25h" if show_cursor else "")
+        mw = overlay_mouse if overlay else want | mouse_want
+        # Resets before sets. Mouse tracking 1000 / 1002 / 1003 is one setting in
+        # xterm and the terminals that copy it (xterm.js, hterm: most phone apps):
+        # resetting any of them turns tracking off, whichever is on. Going from 1002
+        # to 1003 (a window whose app takes every motion, like Claude Code) as
+        # "?1003h ?1002l" left the mouse off, and the terminal then turned a wheel
+        # or a touch drag into arrow keys until the next attach.
+        modes_s = "".join(f"\x1b[?{m}l" for m in sorted(c.modes - mw))
+        modes_s += "".join(f"\x1b[?{m}h" for m in sorted(mw - c.modes))
+        c.modes = mw
+        if overlay and not body and not modes_s:
+            return                                # nothing it shows changed: leave the terminal be
+        # ?7l: no autowrap in the client's terminal while attached (the client turns
+        # it back on when it leaves). Every row is placed with CUP, so pys never
+        # needs a wrap, and a row that runs one cell too wide (a character the
+        # terminal draws wider than wcwidth says, like ⚠️) can't scroll the screen.
+        frame = "\x1b[?2026h\x1b[?25l\x1b[?7l" + modes_s + body + cur + "\x1b[?2026l"
+        c.writer.write(proto.pack(proto.DATA, 0, frame.encode()))
 
     def broadcast_ctl(self, m: dict) -> None:
         for c in self.clients:
@@ -1550,13 +1696,16 @@ class Brain:
 
     async def client_loop(self, r: asyncio.StreamReader, wr: asyncio.StreamWriter,
                           hello: dict) -> None:
-        c = Client(wr, prefix=self.client_prefix(hello), cols=hello["cols"], rows=hello["rows"])
+        c = Client(wr, prefix=self.client_prefix(hello), cols=hello["cols"], rows=hello["rows"],
+                   guest=bool(hello.get("guest")))
+        self.use()                                # a new client starts from the lead's view
+        c.view = deepcopy(self.v)
         self.clients.append(c)
         self.activate(c)
         self.layout.place(self.cols, self.rows - self.status_h)
         if not self.wins:
             w = await self.spawn(cwd=hello.get("cwd"))
-            self.layout.focus.wid = w.wid
+            c.view.layout.focus.wid = w.wid
         self.relayout()
         try:
             while True:
@@ -1567,12 +1716,15 @@ class Brain:
                     c.cols, c.rows = body["cols"], body["rows"]  # type: ignore[index]
                     c.stale = True
                     self.activate(c)
+                    self.use()
                     self.schedule_render()
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
             if c in self.clients:
                 self.clients.remove(c)
+                if not self.clients:              # the last one: its view stays for the next
+                    self.home = c.view
                 self.follow_latest()
             wr.close()
 
@@ -1590,14 +1742,18 @@ class Brain:
             return
         self.last_key = time.monotonic()
         self.activate(c)          # first, so a click's coordinates are in c's layout
-        if mouse.has_report(data):
-            for part in mouse.split(data):
-                if isinstance(part, bytes):
-                    await self.key_bytes(c, part)
-                else:
-                    await self.on_mouse(c, part)
-            return
-        await self.key_bytes(c, data)
+        try:
+            if mouse.has_report(data):
+                for part in mouse.split(data):
+                    self.use(c)                   # an await before may have left another's
+                    if isinstance(part, bytes):
+                        await self.key_bytes(c, part)
+                    else:
+                        await self.on_mouse(c, part)
+                return
+            await self.key_bytes(c, data)
+        finally:
+            self.use()
 
     # ---- mouse --------------------------------------------------------------
     def to_pane(self, p: Pane, ev: mouse.Event) -> bool:
@@ -1606,7 +1762,7 @@ class Brain:
         if not w or not mouse.accepts(mouse.level(w.term.mode), ev):
             return False
         x = min(max(ev.x - p.x, 0), p.w - 1)
-        y = min(max(ev.y - p.y, 0), p.text_h - 1)
+        y = min(max(ev.y - p.y, 0), p.text_h - 1) + p.off
         sgr = w.term.mode(mouse.SGR)
         self.to_keeper(proto.pack(proto.DATA, w.wid, mouse.encode(ev, x, y, sgr)))
         return True
@@ -2092,11 +2248,15 @@ class Brain:
 
     # ---- RPC ----------------------------------------------------------------
     async def rpc(self, m: dict, wr: asyncio.StreamWriter | None = None) -> dict:
+        self.use()                                # a command from outside: the lead's view
         cmd = m.get("cmd")
         if cmd == "ls":
             return {"ok": True, "pid": os.getpid(), "current": self.current,
                     "clients": len(self.clients), "size": [self.cols, self.rows],
                     "client_sizes": [[c.cols, c.rows] for c in self.clients],
+                    "client_views": [{"cols": c.cols, "rows": c.rows, "guest": c.guest,
+                                      "current": c.view.layout.focus.wid,
+                                      "lead": c is self.lead()} for c in self.clients],
                     "windows": [{"wid": w.wid, "pid": w.pid, "name": w.name,
                                  "title": w.title, "agent_title": w.agent_title,
                                  "agent_owner": w.owner,
@@ -2106,7 +2266,8 @@ class Brain:
                                  "mouse": mouse.level(w.term.mode), "scroll": w.scroll,
                                  "history": w.term.history, "copy": w.copy is not None,
                                  "attn": w.attn, "attn_why": w.attn_why or None,
-                                 "attn_at": w.attn_at or None, "group": w.group}
+                                 "attn_at": w.attn_at or None, "group": w.group,
+                                 "size": [w.term.columns, w.term.lines]}
                                 for w in (self.wins[i] for i in self.order)],
                     "panes": [{"wid": p.wid, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
                                "focus": p is self.layout.focus} for p in self.layout.panes()]}
@@ -2138,7 +2299,7 @@ class Brain:
                             f"at most {GROUP_MAX}"}
                 if g != w.group:
                     w.group = g
-                    self.status_dirty = self.status_shrink = True   # the lines may change
+                    self.shrink_all()             # the lines may change
                     self.schedule_render()
                     self.save_state()
                     self.changed()
@@ -2248,6 +2409,13 @@ class Brain:
         """pys kill / prefix Q, before the keeper ends every window: write the record and
         run ON_CHANGE with PYS_EVENT=kill while they all still run, for at most
         KILL_HOOK_TIMEOUT. False if an end is under way already."""
+        v = self.v                                # another client may run meanwhile
+        try:
+            return await self._before_end()
+        finally:
+            self.v = v
+
+    async def _before_end(self) -> bool:
         if self.ending:
             return False
         self.ending = True

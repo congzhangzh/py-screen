@@ -21,6 +21,8 @@ class Pane:
     w: int = 0
     h: int = 0
     bare: bool = False                   # no caption line (CAPTIONS off, a lone pane)
+    off: int = 0                         # the window's rows above the pane's top, as last
+    # drawn: a window taller than its pane (sized by another client) shows its cursor's
 
     @property
     def text_h(self) -> int:

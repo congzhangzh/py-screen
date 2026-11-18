@@ -68,7 +68,10 @@ def rpc(**msg) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser(prog="pys", description="py-screen: a terminal workspace")
     sub = p.add_subparsers(dest="cmd")
-    sub.add_parser("attach", help="attach, starting the server if needed (default)")
+    at = sub.add_parser("attach", help="attach, starting the server if needed (default)")
+    at.add_argument("--guest", action="store_true",
+                    help="a second screen (a phone, a web terminal): it has its own current "
+                         "window, and never resizes a window another client shows")
     ls = sub.add_parser("ls", help="list windows")
     ls.add_argument("--json", action="store_true")
     s = sub.add_parser("send", help="type text into a window")
@@ -160,7 +163,7 @@ def main() -> None:
             sys.exit("pys: attach needs a terminal")
         ensure_server()
         from . import client
-        reason = asyncio.run(client.attach())
+        reason = asyncio.run(client.attach(guest=getattr(a, "guest", False)))
         print({"detached": "[detached]", "bye": "[session ended]"}.get(
             reason, f"[connection {reason}]"))
     else:

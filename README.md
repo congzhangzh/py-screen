@@ -82,8 +82,8 @@ ready-to-use bundle per system, with its own Python inside: unpack it and run `b
 | every key | `?` |
 
 **Status:** milestone M1, used every day by its author on Linux; macOS and Windows are
-tested on CI. It is young: tmux and GNU screen do much more (sessions by name, many
-clients with their own views, a huge set of options). See [Known gaps](#known-gaps-m1).
+tested on CI. It is young: tmux and GNU screen do much more (sessions by name, a huge set
+of options). See [Known gaps](#known-gaps-m1).
 
 ## Use
 
@@ -99,6 +99,7 @@ pys title --wid 3 --clear                 # or another one; no text: print it
 pys title --owner $PPID 'review · pys'    # dropped when that process ends
 pys attn ask --why 'needs a password'     # mark this window: it wants you (red tab)
 pys attn done --wid 3                     # its work is done, it waits (green); --clear
+pys attach --guest  # a second screen (a phone, a web terminal): see "Several clients"
 pys reload          # new brain, same shells
 pys kill            # end everything
 ```
@@ -272,6 +273,21 @@ ends or the terminal is resized, like the status line's rows. `pys-agents team` 
 windows of your own group with their roles (the first word of a title before a `-`:
 `po-…`, `rel-…`), so a member finds its product owner; `pys-agents --group` and
 `pys-agents where --group` keep to one group. The window list (`F2`) has a Group column.
+
+### Several clients
+
+Attach from as many terminals as you like. Each client has its own view: its own current
+window and splits, so prefix `n` in one never moves another; a new client starts from the
+view of the one used last, and a command from outside (`pys select`, `pys new`) acts in
+that one's view. A window can have one size only: it takes the size of its pane in the
+client used last that shows it, as tmux's `window-size latest`, and another client that
+shows it sees it cropped (the rows around its cursor, so a prompt stays in sight).
+
+`pys attach --guest` is for a second screen, such as a phone or a web terminal: a guest
+never resizes a window a normal client shows, so your desktop never shrinks to a phone's
+size. A window only a guest shows takes the guest's size, and gets its home size (the last
+a normal client gave it) back as soon as no guest shows it any more, shown or not.
+`pys ls --json` lists each client's view (`client_views`) and each window's size.
 
 ### Settings
 
