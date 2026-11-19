@@ -1990,12 +1990,17 @@ class Brain:
         self.send_keys(bytes(out))
 
     def inherit_group(self, w: Window, src: Window | None) -> None:
-        """A window opened from another (prefix c, +, a split, `pys new` typed in one) joins
-        its product group: a member a release manager starts lands in its product."""
+        """A window opened from another (prefix c, +, a split, a bound key, `pys new` typed
+        in one) joins its product group: a member a release manager starts lands in its
+        product."""
         if src is not None and src.group and w.group is None:
-            w.group = src.group
-            self.shrink_all()
-            self.save_state()
+            self.set_group(w, src.group)
+
+    def set_group(self, w: Window, g: str | None) -> None:
+        w.group = g
+        self.shrink_all()                         # the product lines may change
+        self.schedule_render()
+        self.save_state()
 
     async def new_window_here(self) -> Window:
         fw = self.focused_window()
@@ -2021,6 +2026,7 @@ class Brain:
             fw = self.focused_window()
             w = await self.spawn(argv, cwd=fw.cwd() if fw else None)
             w.title = title
+            self.inherit_group(w, fw)
             self.select(w.wid)
         elif b == c.prefix or key == " ":
             if self.last is not None:
@@ -2347,18 +2353,17 @@ class Brain:
                     isinstance(k, str) and isinstance(v, str) and k and "=" not in k
                     for k, v in env.items())):
                 return {"ok": False, "error": "env: a {name: value} of strings, no \"=\" in a name"}
-            g = m.get("group")                    # given: that one ("" none); else the
-            if g and not GROUP_RE.fullmatch(g):   # group of the window it was typed in
+            g, src = m.get("group"), m.get("from")   # group given: that one ("" none);
+            if g is not None and not (isinstance(g, str) and (g == "" or GROUP_RE.fullmatch(g))):
                 return {"ok": False, "error": f"group {g!r}: letters, digits, . _ -, "
-                        f"at most {GROUP_MAX}"}
+                        f"at most {GROUP_MAX}"}   # else the group of the window it was typed in
+            if src is not None and not isinstance(src, int):
+                return {"ok": False, "error": f"from {src!r}: a window number"}
             w = await self.spawn(m.get("argv"), m.get("cwd"), env=env)
-            if g is not None:
-                if g:
-                    w.group = g
-                    self.shrink_all()
-                    self.save_state()
-            else:
-                self.inherit_group(w, self.wins.get(m.get("from")))
+            if g:
+                self.set_group(w, g)
+            elif g is None:
+                self.inherit_group(w, self.wins.get(src) if src is not None else None)
             if m.get("select"):
                 self.select(w.wid)
             return {"ok": True, "wid": w.wid, "pid": w.pid}

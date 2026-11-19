@@ -69,3 +69,25 @@ def test_the_hook_nudges_a_window_in_no_group():
     finally:
         t.close()
         sess.kill()
+
+
+def test_a_bad_group_or_from_is_refused():
+    sess = Session("grpbad")
+    t = Term(PYS + ["attach"], sess.env, 120, 30)
+    try:
+        t.wait_for("$ ")
+        for bad in ({"group": 5}, {"group": "no spaces"}, {"from": [1]}):
+            import asyncio
+            from py_screen import proto
+            env = dict(os.environ)
+            os.environ["PYS_DIR"] = str(sess.dir)
+            try:
+                r = asyncio.run(proto.rpc({"cmd": "new", **bad}))
+            finally:
+                os.environ.clear()
+                os.environ.update(env)
+            assert not r["ok"], (bad, r)
+        assert len(groups(sess)) == 1                           # nothing opened
+    finally:
+        t.close()
+        sess.kill()
