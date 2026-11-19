@@ -291,40 +291,70 @@ def titled_by_agent(wid: int) -> bool:
 
 
 def only_tokens(spec: str | None) -> list[str]:
-    return [t.strip() for t in (spec or "").split(",") if t.strip()]
+    toks = [t.strip() for t in (spec or "").split(",") if t.strip()]
+    if spec is not None and not toks:
+        sys.exit("pys-sessions: --only needs window numbers, groups or names; nothing opened")
+    return toks
 
 
-def names_of(w: dict) -> list[str]:
-    """What a token can name in a window: its titles, its name, its agent's name."""
-    return [x for x in (w.get("agent_title"), w.get("title"), w.get("name"),
-                        (w.get("agent") or {}).get("name")) if x]
+def member_names(w: dict) -> list[str]:
+    """A window's member name(s): the first word of its titles (`pys-po-g1 groups busy` →
+    pys-po-g1), without a restore's ↺; not the job or state words after it, not the program's
+    name, not Claude's own session name (it can be stale)."""
+    out = []
+    for t in (w.get("agent_title"), w.get("title")):
+        first = (t or "").strip().split(" ", 1)[0].lstrip("↺").strip()
+        if first and first.lower() not in out:
+            out.append(first.lower())
+    return out
 
 
 def matches(w: dict, token: str) -> bool:
-    """token names w: its group (whole), or a title or name that starts with it or has it
-    as a word (`samvada` names `po-samvada-g2 busy`, `po-pys` names `po-pys-g1 free`)."""
+    """token names w: its group (whole), or its member name: the start of it (`po-sam` names
+    `po-samvada-g2`) or one of its dash-separated parts (`samvada`, `pys`)."""
     t = token.lower()
     if (w.get("group") or "").lower() == t:
         return True
-    return any(n.lower().startswith(t) or t in re.split(r"[^0-9a-z]+", n.lower())
-               for n in names_of(w))
+    return any(n.startswith(t) or (t in n.split("-") and not re.fullmatch(r"g\d+", t))
+               for n in member_names(w))          # a generation (g1) names no one
 
 
-def find_named(token: str, live: set[str], now: int | None) -> tuple[Path, list[dict]] | None:
-    """The newest snapshot with a window token names that has an agent session, and those
-    windows. A snapshot of this pys server counts only for a session that no longer runs
-    (one that runs is here already; an earlier server's copy says so as a skip)."""
+def windows_of(snap: Path) -> tuple[int | None, list[dict]]:
+    """A snapshot's server pid and windows; nothing for one that can't be read."""
+    try:
+        d = json.loads((snap / "windows.json").read_text(encoding="utf-8"))
+        ws = [w for w in d["windows"] if isinstance(w, dict) and "wid" in w]
+        return d.get("server_pid"), ws
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None, []
+
+
+def still_here(w: dict) -> bool:
+    """A window of this pys server whose shell still runs: not lost, whatever runs in it
+    (a claude, a codex)."""
+    pid = w.get("shell_pid")
+    return isinstance(pid, int) and procs.alive(pid)
+
+
+def find_named(token: str, live: set[str], now: int | None) -> list[tuple[Path, dict]]:
+    """The windows token names that had an agent session: from the newest snapshot of an
+    earlier pys server that has any (the server that died), and, of this server, the ones
+    whose window is gone and whose session no longer runs (from its newest snapshot with
+    any). A newer one of this server never hides the dead server's."""
+    earlier: list[tuple[Path, dict]] = []
+    here: list[tuple[Path, dict]] = []
     for snap in reversed(snapshots()):
-        try:
-            d = json.loads((snap / "windows.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        ws = [w for w in d["windows"] if w.get("agent") and matches(w, token)]
-        if d.get("server_pid") == now:
-            ws = [w for w in ws if w["agent"]["session"] not in live]
-        if ws:
-            return snap, ws
-    return None
+        server, ws = windows_of(snap)
+        ws = [w for w in ws if w.get("agent") and matches(w, token)]
+        if server == now and now is not None:
+            if not here:
+                here = [(snap, w) for w in ws
+                        if w["agent"].get("session") not in live and not still_here(w)]
+        elif not earlier and ws:
+            earlier = [(snap, w) for w in ws]
+        if earlier and here:
+            break
+    return earlier + here
 
 
 def restore_plan(a, live: set[str]) -> list[tuple[Path, dict]]:
@@ -332,23 +362,22 @@ def restore_plan(a, live: set[str]) -> list[tuple[Path, dict]]:
     A name without SNAP: looked up across snapshots (find_named). A token that names
     nothing stops it all, before anything opens."""
     toks = only_tokens(a.only)
-    nums = {int(t) for t in toks if t.isdigit()}
-    names = [t for t in toks if not t.isdigit()]
+    nums = {int(t) for t in toks if t.isdecimal()}
+    names = [t for t in toks if not t.isdecimal()]
     out: list[tuple[Path, dict]] = []
     if a.snap or not names:
         s = pick(a.snap)
-        ws = json.loads((s / "windows.json").read_text(encoding="utf-8"))["windows"]
+        _, ws = windows_of(s)
         for t in toks:
-            if not any((w["wid"] == int(t)) if t.isdigit() else matches(w, t) for w in ws):
+            if not any((w["wid"] == int(t)) if t.isdecimal() else matches(w, t) for w in ws):
                 sys.exit(f"pys-sessions: --only {t!r} names no window in {s.name} "
                          "(`pys-sessions show` lists them); nothing opened")
-        out = [(s, w) for w in ws if not toks or w["wid"] in nums
-               or any(matches(w, t) for t in names)]
-        return out
+        return [(s, w) for w in ws if not toks or w["wid"] in nums
+                or any(matches(w, t) for t in names)]
     now = current_server_pid()
     if nums:
         s = pick(None)
-        ws = json.loads((s / "windows.json").read_text(encoding="utf-8"))["windows"]
+        _, ws = windows_of(s)
         for n in sorted(nums):
             w = next((w for w in ws if w["wid"] == n), None)
             if w is None:
@@ -356,10 +385,11 @@ def restore_plan(a, live: set[str]) -> list[tuple[Path, dict]]:
             out.append((s, w))
     for t in names:
         found = find_named(t, live, now)
-        if found is None:
+        if not found:
             sys.exit(f"pys-sessions: --only {t!r} names no window with an agent session in any "
-                     "snapshot (`pys-sessions list`, `show`); nothing opened")
-        out.extend((found[0], w) for w in found[1])
+                     "snapshot (a shell window: give the SNAP, `pys-sessions show` lists them); "
+                     "nothing opened")
+        out.extend(found)
     seen, plan = set(), []
     for s, w in out:                       # a window two tokens name: once
         key = (w.get("agent") or {}).get("session") or (s.name, w["wid"])

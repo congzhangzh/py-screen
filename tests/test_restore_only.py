@@ -126,3 +126,48 @@ def test_yes_opens_only_the_named_window_on_a_second_server(env, tmp_path):
             == [("↺notes-shell", "pys")]
     finally:
         subprocess.run(pys + ["kill"], env=env, capture_output=True, timeout=30)   # its own server
+
+
+# ---- after review: matching, this server's snapshots, odd input ------------------------
+def test_matching_is_the_member_name_or_group_not_status_words(env):
+    snaps = Path(env["PYS_SESSIONS_DIR"])
+    snap(snaps, "20261119-180000", 444, [win(3, "↺rel-rdp-g1 #439 busy", "rdp", "cccc-rdp"),
+                                         win(8, "all-edu-g1 free", "shared", "cccc-edu")])
+    r = restore(env, "--only", "rel-rdp-g1")                          # a ↺ title still names it
+    assert rows(r.stdout) == ["↺rel-rdp-g1"], r.stdout + r.stderr  # from the newest one
+    assert "20261119-180000" in r.stdout, r.stdout + r.stderr
+    for loose in ("busy", "free", "g1", "claude"):                    # state words, the program
+        r = restore(env, "--only", loose)
+        assert r.returncode != 0 and "names no window" in r.stderr, (loose, r.stdout)
+    assert rows(restore(env, "--only", "edu").stdout) == ["all-edu-g1"]   # a part of the name
+
+
+def test_odd_input_is_refused_cleanly(env):
+    snaps = Path(env["PYS_SESSIONS_DIR"])
+    (snaps / "20261119-190000").mkdir()
+    (snaps / "20261119-190000" / "windows.json").write_text("[1, 2]", encoding="utf-8")
+    r = restore(env, "--only", "samvada")                             # a broken snapshot: skipped
+    assert rows(r.stdout) == ["po-samvada-g2"], r.stdout + r.stderr
+    for bad in (",", "²"):
+        r = restore(env, "--only", bad)
+        assert r.returncode != 0 and "Traceback" not in r.stderr, (bad, r.stderr)
+
+
+def test_this_servers_snapshots(env, monkeypatch):
+    """The dead server's whole group comes first; this server adds only windows that are
+    gone (their shell ended) and whose session no longer runs; a newer one of this server
+    never hides the dead server's."""
+    from py_screen.agents import sessions
+    monkeypatch.setenv("PYS_SESSIONS_DIR", env["PYS_SESSIONS_DIR"])
+    snaps = Path(env["PYS_SESSIONS_DIR"])
+    dead_shell = 2 ** 22 + 12345                                      # no such process
+    gone = win(70, "pys-comp-g1 free", "pys", "dddd-gone")
+    gone["shell_pid"] = dead_shell
+    here = win(71, "pys-rev-g1 free", "pys", "dddd-here")
+    here["shell_pid"] = os.getpid()                                   # its window still runs
+    snap(snaps, "20261119-200000", 999, [gone, here])                 # this server: 999
+    found = sessions.find_named("pys", live=set(), now=999)
+    got = [(s.name, w["wid"]) for s, w in found]
+    assert got == [("20261119-042959", 53), ("20261119-200000", 70)], got
+    found = sessions.find_named("pys", live={"dddd-gone"}, now=999)   # its session runs: not lost
+    assert [w["wid"] for _, w in found] == [53]
