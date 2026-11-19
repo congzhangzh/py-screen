@@ -53,13 +53,17 @@ class Keeper:
         self.started = time.time()               # names the brain's server record
 
     # ---- ptys ---------------------------------------------------------
-    def spawn(self, cmd: list[str], cwd: str | None, cols: int, rows: int) -> Win:
+    def spawn(self, cmd: list[str], cwd: str | None, cols: int, rows: int,
+              extra: dict | None = None) -> Win:
         wid = self.next_wid
         self.next_wid += 1
         # PYS_SESSION names this server (its runtime dir), so a `pys` typed in the window
         # can tell it would attach to the session it runs in (see __init__.nested_in).
-        env = dict(os.environ, TERM="screen-256color", PYS_WINDOW=str(wid),
-                   PYS_SESSION=os.path.realpath(proto.runtime_dir()))
+        # extra (`pys new --env`) is this window's alone: a copy, never the keeper's own
+        # environment, never logged, never kept; PYS_WINDOW and PYS_SESSION are pys's.
+        env = dict(os.environ, TERM="screen-256color")
+        env.update(extra or {})
+        env.update(PYS_WINDOW=str(wid), PYS_SESSION=os.path.realpath(proto.runtime_dir()))
         env.pop("PYS_DIR_INTERNAL", None)
         p = platform.spawn_pty(cmd, cwd, env, cols, rows)
         w = Win(wid, p.pid, p, cols, rows, cmd)
@@ -180,7 +184,7 @@ class Keeper:
             self.ack(m["wid"], m["n"])
         elif op == "spawn":
             try:
-                x = self.spawn(m["cmd"], m.get("cwd"), m["cols"], m["rows"])
+                x = self.spawn(m["cmd"], m.get("cwd"), m["cols"], m["rows"], m.get("env"))
             except OSError as e:                    # Windows: CreateProcess fails here
                 log("spawn failed", m["cmd"], e)    # (POSIX: the child exits 127)
                 self.to_brain(proto.pack_ctl({"op": "spawn_failed", "tag": m.get("tag"),

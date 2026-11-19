@@ -649,7 +649,9 @@ class Brain:
                                            "cols": s.columns, "rows": s.lines}))
 
     async def spawn(self, cmd: list[str] | None = None, cwd: str | None = None,
-                    size: tuple[int, int] | None = None) -> Window:
+                    size: tuple[int, int] | None = None, env: dict | None = None) -> Window:
+        """A new window. env (`pys new --env`) goes to the keeper for that window's process
+        only: the brain keeps it nowhere and never logs it."""
         self.tag_n += 1
         tag = f"t{self.tag_n}"
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -658,7 +660,8 @@ class Brain:
         f = self.layout.focus
         cols, rows = size or ((f.w, f.text_h) if f.w else (self.cols, self.rows - 2))
         self.to_keeper(proto.pack_ctl({"op": "spawn", "cmd": cmd, "cwd": cwd, "tag": tag,
-                                       "cols": cols, "rows": rows}))
+                                       "cols": cols, "rows": rows,
+                                       **({"env": env} if env else {})}))
         v = self.v                                # another client may run meanwhile
         try:
             return await asyncio.wait_for(fut, 5)
@@ -2328,7 +2331,12 @@ class Brain:
             return {"ok": True, "lines": t.display, "cursor": list(t.cursor),
                     "engine": t.engine, "history": history, "scroll": w.scroll}
         if cmd == "new":
-            w = await self.spawn(m.get("argv"), m.get("cwd"))
+            env = m.get("env") or None
+            if env is not None and not (isinstance(env, dict) and all(
+                    isinstance(k, str) and isinstance(v, str) and k and "=" not in k
+                    for k, v in env.items())):
+                return {"ok": False, "error": "env: a {name: value} of strings, no \"=\" in a name"}
+            w = await self.spawn(m.get("argv"), m.get("cwd"), env=env)
             if m.get("select"):
                 self.select(w.wid)
             return {"ok": True, "wid": w.wid, "pid": w.pid}

@@ -92,6 +92,7 @@ uv tool install -e .       # puts `pys` in ~/.local/bin, running this checkout (
 pys                        # attach (starts the server on first use)
 pys ls [--json]     # windows
 pys new [--select] [-- cmd …]
+pys new --env BUDDY_LONG=1 -- claude --resume <id>   # K=V for that window's process only
 pys send 0 'make test' --enter
 pys capture 0       # the window's screen as text
 pys title 'release · kit · #12 libfuse'   # name the window this runs in ($PYS_WINDOW)

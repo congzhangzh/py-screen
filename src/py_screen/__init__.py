@@ -65,6 +65,18 @@ def rpc(**msg) -> dict:
     return reply
 
 
+def new_env(pairs: list[str]) -> dict:
+    """`pys new --env K=V …` as the rpc's env (nothing when none): K a name with no "=",
+    neither may hold a NUL (an environment block can't). An error names K, never V."""
+    env: dict[str, str] = {}
+    for pair in pairs:
+        k, eq, v = pair.partition("=")
+        if not eq or not k or "\0" in pair:
+            sys.exit(f"pys new: --env takes K=V, a name, \"=\", a value (got {k or pair[:1]!r}…)")
+        env[k] = v
+    return {"env": env} if env else {}
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="pys", description="py-screen: a terminal workspace")
     sub = p.add_subparsers(dest="cmd")
@@ -118,6 +130,9 @@ def main() -> None:
     c.add_argument("--json", action="store_true")
     n = sub.add_parser("new", help="new window, optionally running a command")
     n.add_argument("--select", action="store_true")
+    n.add_argument("--env", action="append", default=[], metavar="K=V",
+                   help="set K=V in the new window's process only (repeatable); never "
+                        "logged, never kept: a restored window doesn't get it back")
     n.add_argument("argv", nargs=argparse.REMAINDER)
     sel = sub.add_parser("select", help="show a window")
     sel.add_argument("wid", type=int)
@@ -198,7 +213,7 @@ def main() -> None:
             "capture": lambda: rpc(cmd="capture", history=a.history,
                                    **({} if a.wid is None else {"wid": a.wid})),
             "new": lambda: rpc(cmd="new", argv=[x for x in a.argv if x != "--"] or None,
-                               cwd=os.getcwd(), select=a.select),
+                               cwd=os.getcwd(), select=a.select, **new_env(a.env)),
             "select": lambda: rpc(cmd="select", wid=a.wid),
             "title": lambda: rpc(cmd="title", wid=a.wid,
                                  **({"text": None} if a.clear else
