@@ -33,14 +33,7 @@ def session_dir(tag: str = "t") -> Path:
     return Path(base) / f"pys-{tag}-{uuid.uuid4().hex[:8]}"
 
 
-def keeper_runs(pid: int) -> bool:
-    """pid is alive and a pys keeper (not a number reused by another process)."""
-    try:
-        out = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True,
-                             text=True, encoding="utf-8", errors="replace", timeout=5).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return "py_screen" in out and "_keeper" in out
+from stopper import keeper_runs, stop_keepers  # noqa: E402,F401  (keeper_runs: tests use it)
 
 
 class Session:
@@ -70,23 +63,7 @@ class Session:
         and filled the run dir with their log (2026-11-19)."""
         self.pys("kill", check=False)
         time.sleep(0.2)
-        pids = set()
-        try:                                       # the keeper's own, from its start
-            pids.add(int((self.dir / "keeper.pid").read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            pass
-        for rec in (self.dir / "state" / "pys" / "servers").glob("*-*.json"):
-            try:
-                pids.add(int(rec.stem.rsplit("-", 1)[1]))
-            except ValueError:
-                continue
-        for pid in pids:
-            if keeper_runs(pid):
-                os.kill(pid, signal.SIGTERM)
-                for _ in range(50):
-                    if not keeper_runs(pid):
-                        break
-                    time.sleep(0.1)
+        stop_keepers(self.dir, self.dir / "state")
         shutil.rmtree(self.dir, ignore_errors=True)
 
 

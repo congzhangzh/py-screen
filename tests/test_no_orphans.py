@@ -16,11 +16,15 @@ from test_mouse import wait
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the pty harness is POSIX-only")
 
 
-def test_crash_wait_grows_and_stops_at_a_minute():
-    now = 1000.0
-    waits = [keeper.crash_wait([now - i for i in range(n)], now) for n in range(1, 12)]
-    assert waits[:4] == [0, 0, 0, 0] and waits[4] == 5 and waits[5] == 10
-    assert max(waits) == 60 and waits == sorted(waits)
+def test_a_crash_loop_backs_off_to_a_minute_and_stays_there():
+    """The real decision (Keeper.after_crash), driven as run_brain drives it: a brain that
+    dies 1 s after each start. The backoff's sleep is not running time, so the waits climb
+    to 60 s and stay; a brain that then runs 30 s starts the count again."""
+    k = keeper.Keeper()
+    waits = [k.after_crash(1.0) for _ in range(12)]
+    assert waits[:4] == [0, 0, 0, 0] and waits[4:8] == [5, 10, 20, 40]
+    assert waits[8:] == [60, 60, 60, 60]
+    assert k.after_crash(31.0) == 0 and k.crashes == 1
 
 
 def test_kill_stops_a_keeper_whose_brain_cannot_answer():
@@ -51,3 +55,31 @@ def test_the_log_is_cut_in_a_crash_loop(tmp_path, monkeypatch):
     data = log.read_bytes()
     assert len(data) < keeper.LOG_KEEP + 200 and data.startswith(b"[server.log cut")
     assert data.endswith(b"after\n")
+
+
+def test_a_keeper_whose_socket_is_gone_starts_no_more_brains():
+    """keeper.sock removed (its dir cleaned up, logind at logout): a brain could not reach
+    the keeper, and one started anyway would make the dir again and take a newer keeper's
+    place. The keeper stops starting brains and keeps its shells."""
+    import json
+    import subprocess
+    sess = Session("sockgone")
+    t = Term(PYS + ["attach"], sess.env, 100, 30)
+    try:
+        t.wait_for("$ ")
+        kpid = int((sess.dir / "keeper.pid").read_text(encoding="utf-8"))
+        brain = json.loads(sess.pys("ls", "--json"))["pid"]
+        t.close()
+        (sess.dir / "keeper.sock").unlink()
+        os.kill(brain, signal.SIGKILL)
+
+        def brains() -> list[str]:
+            out = subprocess.run(["ps", "-ww", "-o", "pid=,ppid=,command=", "-A"], capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace").stdout
+            return [l for l in out.splitlines() if "_brain" in l and l.split()[1] == str(kpid)]
+        wait(lambda: "no more brains" in (sess.dir / "server.log").read_text(encoding="utf-8"),
+             timeout=10, what=lambda: (sess.dir / "server.log").read_text(encoding="utf-8")[-800:])
+        assert brains() == [] and keeper_runs(kpid)            # no brain; the shells stay
+    finally:
+        sess.kill()
+        assert not keeper_runs(kpid)

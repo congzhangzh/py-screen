@@ -21,6 +21,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from stopper import stop_keepers
+
 WIN = sys.platform == "win32"
 PY = [sys.executable, "-m"]
 BIN = os.environ.get("PYS_SMOKE_BIN")          # an installed pys, pys-agents, pys-sessions
@@ -210,4 +212,5 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
     finally:
         pys("kill", check=False)
         time.sleep(0.3)
+        stop_keepers(Path(run_dir))           # a server pys kill could not reach
         shutil.rmtree(run_dir, ignore_errors=True)

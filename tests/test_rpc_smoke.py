@@ -17,6 +17,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from stopper import stop_keepers
+
 PYS = [sys.executable, "-m", "py_screen"]
 WIN = sys.platform == "win32"
 
@@ -116,4 +118,5 @@ def test_rpc_smoke(tmp_path: Path) -> None:
     finally:
         pys("kill", check=False)
         time.sleep(0.3)
+        stop_keepers(Path(run_dir))           # a server pys kill could not reach
         shutil.rmtree(run_dir, ignore_errors=True)

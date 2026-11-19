@@ -29,16 +29,11 @@ LOG_CAP = 20 << 20          # server.log past this, at a brain restart: cut to i
 LOG_KEEP = 1 << 20
 
 
-def crash_wait(starts: list[float], now: float) -> float:
-    """How long to wait before starting the brain again after a crash: nothing for the
-    first few, then 5 s, doubling with each crash that came soon after the last start, to
-    60 s at most. Never giving up: the keeper holds the user's shells, a brain is only their
-    view. A brain that ran 30 s resets it (run_brain keeps only recent starts)."""
-    recent = [t for t in starts if now - t < 300]
-    n = len(recent)
-    if n < 5:
-        return 0.0
-    return min(60.0, 5.0 * 2 ** (n - 5))
+def crash_wait(crashes: int) -> float:
+    """How long to wait before starting the brain again after its crashes-th crash in a
+    row: nothing for the first four, then 5 s, doubling, 60 s at most. Never giving up: the
+    keeper holds the user's shells, a brain is only their view."""
+    return 0.0 if crashes < 5 else min(60.0, 5.0 * 2 ** (crashes - 5))
 
 
 def cap_log(path: Path | None = None) -> None:
@@ -65,6 +60,7 @@ def cap_log(path: Path | None = None) -> None:
         pass
     try:
         os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)    # Windows: no O_APPEND, writes go at the file pointer
         os.write(fd, b"[server.log cut: it passed %d MB in a crash loop]\n" % (LOG_CAP >> 20) + tail)
     except OSError:
         pass
@@ -95,7 +91,8 @@ class Keeper:
         self.brain_proc: asyncio.subprocess.Process | None = None
         self.paused = False
         self.stopping = asyncio.Event()
-        self.brain_starts: list[float] = []
+        self.crashes = 0                         # brain crashes in a row (after_crash)
+        self.sock_id: tuple[int, int] | None = None   # the keeper.sock this keeper bound
         self.started = time.time()               # names the brain's server record
 
     # ---- ptys ---------------------------------------------------------
@@ -252,8 +249,33 @@ class Keeper:
             self.stopping.set()
 
     # ---- brain process --------------------------------------------------
+    def after_crash(self, ran: float) -> float:
+        """A brain that ran `ran` seconds since its start crashed: the wait before the next
+        one. One that ran 30 s ends a crash loop (the count starts again); the backoff's
+        own sleep never counts as running."""
+        self.crashes = 1 if ran >= 30 else self.crashes + 1
+        return crash_wait(self.crashes)
+
+    def sock_is_mine(self) -> bool:
+        """keeper.sock is still the socket this keeper bound (POSIX: same inode). Its dir
+        removed (a test cleaned up, logind at logout) or a newer keeper's socket there: no
+        brain of ours can reach us, and one that started would take the newer keeper's
+        place (proto.runtime_dir makes the dir again). Windows' pipes have no file here."""
+        if self.sock_id is None:
+            return True
+        try:
+            st = os.stat(proto.keeper_sock_path())
+        except OSError:
+            return False
+        return (st.st_dev, st.st_ino) == self.sock_id
+
     async def run_brain(self) -> None:
         while not self.stopping.is_set():
+            if not self.sock_is_mine():
+                log("keeper.sock is gone or another keeper's: no more brains; the shells keep "
+                    "running until they end or this keeper is stopped")
+                return
+            started = time.monotonic()
             self.brain_proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "py_screen", "_brain", env=proto.utf8_env())
             code = await self.brain_proc.wait()
@@ -262,13 +284,8 @@ class Keeper:
             if code == proto.RELOAD_EXIT:           # asked for: never throttled
                 log("brain reload")
                 continue
-            now = time.monotonic()                  # a crash: back off, and keep the log
-            ran = now - (self.brain_starts[-1] if self.brain_starts else now)
-            if ran >= 30:                           # it ran a while: a new crash, not a loop
-                self.brain_starts = []
-            self.brain_starts = [t for t in self.brain_starts if now - t < 300] + [now]
-            cap_log()
-            wait = crash_wait(self.brain_starts, now)
+            cap_log()                               # a crash: keep the log, back off
+            wait = self.after_crash(time.monotonic() - started)
             log("brain exited", code, "- starting it again" + (f" in {wait:.0f} s" if wait else ""))
             if wait:
                 await asyncio.sleep(wait)
@@ -276,6 +293,9 @@ class Keeper:
     async def main(self) -> None:
         path = proto.keeper_sock()
         server = await platform.serve(path, self.on_brain)
+        if os.name == "posix":
+            st = os.stat(path)
+            self.sock_id = (st.st_dev, st.st_ino)
         loop = asyncio.get_running_loop()
         platform.on_stop(loop, self.stopping.set)
         log("listening", path, "pid", os.getpid())
