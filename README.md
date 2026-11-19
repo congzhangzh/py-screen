@@ -256,10 +256,10 @@ under its name), then a line `others` for the windows in no group, and pys's own
 last, with no window on it: the buttons, the motto and its maker, the widgets:
 
 ```
- product-a  0* rel-product-a-g1 #373 busy  1 comp-ui-g3 #369 busy  3 dbg-product-a-g1 busy  4 comp-server-g4 free  6 po-product-a-g3 #374 free
-            7 rev-review-g3 free  8 comp-client-g1 #374 busy
- product-b  2 po-product-b-g8 free  9 comp-sync-g1 free
- shared     5 edu-all-g1 free  others│ 10 po-pys-g1 groups busy
+ product-a  0* product-a-rel-g1 #373 busy  1 product-a-comp-g3 #369 busy  3 product-a-dbg-g1 busy  4 product-a-comp-g4 free  6 product-a-po-g3 #374 free
+            7 product-a-rev-g3 free  8 product-a-comp-g1 #374 busy
+ product-b  2 product-b-po-g8 free  9 product-b-comp-g1 free
+ shared     5 all-edu-g1 free  others│ 10 pys-po-g1 groups busy
  pys  +  ▾  ?             many agent teams, one Brahman · by CZ, an engineer for engineers, near the magnet             15.81  11-14 03:52
 ```
 

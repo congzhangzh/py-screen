@@ -50,7 +50,7 @@ def rules() -> list[str]:
     pys = command_for("pys", "py_screen")
     agents = command_for("pys-agents", "py_screen.agents.listing")
     return [
-        f'Name your window at the start and when your work changes, short (about 24 characters): {pys} title --agent "<role> <what you work on>". --agent makes this session its owner (pys finds it), so the title ends with it.',
+        f'Name your window at the start and when your work changes, short (about 24 characters): {pys} title --agent "<your name> <what you work on>" (a team member is named <context>-<role>-g<N>, e.g. "pys-po-g1 groups busy"). --agent makes this session its owner (pys finds it), so the title ends with it.',
         f"Put your window in its product's group when you start: {pys} group <product> (`{pys} group --list` shows the groups; a member that serves every product: {pys} group shared). A window opened from yours gets its group.",
         f"{agents} lists the agents and their windows; `{agents} where` each window's folder and git branch. Look before you work in a repo another window works in.",
         f'`{pys} capture <wid>` reads a window. Type into one only with the user\'s word and only when it is idle: the text first, then Enter on its own (`{pys} send --enter <wid> ""`).',

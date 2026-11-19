@@ -8,9 +8,9 @@
                                       against the upstream, and the agent in it if any
   pys-agents team [--group G] [--json]
                                       the windows of a product group (default: this
-                                      window's, `pys group`), each with its role, the first
-                                      word of its title before a `-` (po-…, rel-…), so a
-                                      member finds its product owner or release manager
+                                      window's, `pys group`), each with its role, from
+                                      its name (`<context>-<role>-g<N>`: …-po-…, …-rel-…), so
+                                      a member finds its product owner or release manager
   pys-agents --group G, where --group G
                                       only the windows of that group
   pys-agents skills [--install [--dir DIR]]
@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -113,11 +114,20 @@ def table(head: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)) + "  " + r[-1])
 
 
+ROLES = ("po", "rel", "rev", "comp", "dbg", "edu")   # the team rule's roles
+
+
 def role(title: str | None) -> str | None:
-    """A member's role from its title: the first word's part before a `-`
-    (`po-product-a-g2 free` → po); None for a title not in that form."""
-    first = (title or "").split(" ", 1)[0]
-    return first.split("-", 1)[0] or None if "-" in first else None
+    """A member's role from its title's first word, its name: `<context>-<role>-g<N>`
+    (`product-a-po-g2 free` → po), or the older `<role>-<context>-g<N>` (`po-product-a-g2`),
+    which a member keeps until its next resume. None for a title with no role in it."""
+    parts = (title or "").split(" ", 1)[0].lower().split("-")
+    if len(parts) < 2:
+        return None
+    # the part before g<N> (a context may have dashes of its own: product-a-po-g1)
+    if len(parts) > 2 and re.fullmatch(r"g\d+", parts[-1]) and parts[-2] in ROLES:
+        return parts[-2]
+    return parts[0] if parts[0] in ROLES else None
 
 
 SHARED = "shared"   # the group of the windows that serve every group (brain.SHARED)
