@@ -318,7 +318,10 @@ def cmd_restore(a) -> int:
             before = {x["wid"] for x in json.loads(pys("ls", "--json"))["windows"]}
         except (RuntimeError, ValueError):
             before = set()             # no server yet: the first `pys new` starts it
-        pys("new", *window_cmd(w, s))
+        try:                                     # its own group, or none (never the restorer's)
+            pys("new", "--group", w.get("group") or "", *window_cmd(w, s))
+        except RuntimeError:                     # a group this pys refuses: open it in none
+            pys("new", "--group", "", *window_cmd(w, s))
         time.sleep(0.3)
         after = json.loads(pys("ls", "--json"))["windows"]
         new = [x for x in after if x["wid"] not in before]

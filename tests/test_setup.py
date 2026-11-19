@@ -13,7 +13,9 @@ PY = [sys.executable, "-m"]
 def env_for(tmp: Path, **extra: str) -> dict:
     e = dict(os.environ, HOME=str(tmp), USERPROFILE=str(tmp), PYS_CONFIG=str(tmp / "cfg" / "config.py"),
              CLAUDE_CONFIG_DIR=str(tmp / "claude"))
-    e.pop("PYS_WINDOW", None)                 # this test may run inside a pys window
+    for k in ("PYS_WINDOW", "PYS_SESSION"):  # this test may run inside a pys window: never
+        e.pop(k, None)                        # reach that server (the hook asks its group)
+    e["PYS_DIR"] = str(tmp / "run")           # a runtime dir of its own, with no server
     return e | extra
 
 

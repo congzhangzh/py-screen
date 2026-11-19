@@ -50,7 +50,8 @@ def rules() -> list[str]:
     pys = command_for("pys", "py_screen")
     agents = command_for("pys-agents", "py_screen.agents.listing")
     return [
-        f'Name your window at the start and when your work changes, short (about 24 characters): {pys} title --agent "<role> <what you work on>". --agent makes this session its owner (pys finds it), so the title ends with it.',
+        f'Name your window at the start and when your work changes, short (about 24 characters): {pys} title --agent "<your name> <what you work on>" (a team member is named <context>-<role>-g<N>, e.g. "pys-po-g1 groups busy"). --agent makes this session its owner (pys finds it), so the title ends with it.',
+        f"Put your window in its product's group when you start: {pys} group <product> (`{pys} group --list` shows the groups; a member that serves every product: {pys} group shared). A window opened from yours gets its group.",
         f"{agents} lists the agents and their windows; `{agents} where` each window's folder and git branch. Look before you work in a repo another window works in.",
         f'`{pys} capture <wid>` reads a window. Type into one only with the user\'s word and only when it is idle: the text first, then Enter on its own (`{pys} send --enter <wid> ""`).',
         f"Never `{pys} kill`, prefix Q, or a pkill that could match pys: they end every window, the user's and other agents' too.",
@@ -91,12 +92,34 @@ def rule_state() -> str:
     return "old" if have.startswith(RULE_MARK) else "mine"
 
 
+def window_group(wid: str) -> str | None:
+    """The window's product group, "" for none, None when pys can't say (no server, an
+    old one): asked of the session the window belongs to, in a second at most."""
+    import asyncio
+
+    from .. import proto
+    if s := os.environ.get("PYS_SESSION"):
+        os.environ["PYS_DIR"] = s                 # the window's own session, not a default
+    try:
+        r = asyncio.run(proto.rpc({"cmd": "group", "wid": int(wid)}, timeout=1.0))
+    except Exception:
+        return None
+    return (r.get("group") or "") if r.get("ok") else None
+
+
 def hook_text(wid: str) -> str:
-    """What the hook adds: the rules, or only the window when the rule file has them."""
+    """What the hook adds: the rules, or only the window when the rule file has them; and,
+    for a window in no product group, that it is in none."""
     if rule_state() == "ok":
-        return (f"You run inside py-screen (pys), window {wid}; the pys rule ({RULE} in your "
-                "rules) says how to work in it.")
-    return text(wid)
+        out = (f"You run inside py-screen (pys), window {wid}; the pys rule ({RULE} in your "
+               "rules) says how to work in it.")
+    else:
+        out = text(wid)
+    if window_group(wid) == "":
+        pys = command_for("pys", "py_screen")
+        out += (f"\nYour window is in no product group: join your product's now ({pys} group "
+                f"<product>; {pys} group --list shows them).")
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -12,7 +12,8 @@ below reads freely and changes carefully.
 ## Name your window
 
 ```bash
-pys title --agent "<role> <what you work on>"     # e.g. "review PR 42", "build fix"
+pys title --agent "<your name> <what you work on>"   # e.g. "pys-po-g1 groups busy"; a team
+                                                   # member's name is <context>-<role>-g<N>
 ```
 
 `--agent` makes the Claude Code session this runs under the title's owner: pys finds it by

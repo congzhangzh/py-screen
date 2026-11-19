@@ -97,8 +97,8 @@ def test_team_lists_a_group_with_roles():
     try:
         t.wait_for("$ ")
         a, b, c = three_windows(sess)
-        sess.pys("title", "--wid", str(a), "po-product-a-g1 free")
-        sess.pys("title", "--wid", str(c), "rel-product-a-g2 #4 busy")
+        sess.pys("title", "--wid", str(a), "product-a-po-g1 free")         # context first
+        sess.pys("title", "--wid", str(c), "rel-product-a-g2 #4 busy")     # the older order
         team = [sys.executable, "-m", "py_screen.agents.listing", "team"]
         r = subprocess.run(team + ["--group", "product-a", "--json"], env=sess.env,
                            capture_output=True, text=True, timeout=30, check=True, encoding="utf-8", errors="replace")
@@ -212,3 +212,15 @@ def test_shared_and_others_share_a_line():
     finally:
         t.close()
         sess.kill()
+
+
+def test_role_reads_both_name_orders():
+    from py_screen.agents.listing import role
+    assert role("pys-po-g1 groups busy") == "po"             # <context>-<role>-g<N>
+    assert role("rdp-rel-g1 #439 busy") == "rel"
+    assert role("all-edu-g1 free") == "edu"
+    assert role("product-a-po-g1 free") == "po"             # a context with a dash
+    assert role("po-samvada-g2 busy") == "po"                # <role>-<context>-g<N>, until resumed
+    assert role("rel-samvada #334 busy") == "rel"
+    assert role("brahman-review-g1 shell") is None           # "review" is no role name
+    assert role("sh") is None and role(None) is None
