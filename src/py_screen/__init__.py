@@ -130,6 +130,9 @@ def main() -> None:
     c.add_argument("--json", action="store_true")
     n = sub.add_parser("new", help="new window, optionally running a command")
     n.add_argument("--select", action="store_true")
+    n.add_argument("--group", metavar="G",
+                   help="its product group; by default the group of the window this runs in "
+                        "(\"\" for none)")
     n.add_argument("--env", action="append", default=[], metavar="K=V",
                    help="set K=V in the new window's process only (repeatable); never "
                         "logged, never kept: a restored window doesn't get it back")
@@ -213,7 +216,9 @@ def main() -> None:
             "capture": lambda: rpc(cmd="capture", history=a.history,
                                    **({} if a.wid is None else {"wid": a.wid})),
             "new": lambda: rpc(cmd="new", argv=[x for x in a.argv if x != "--"] or None,
-                               cwd=os.getcwd(), select=a.select, **new_env(a.env)),
+                               cwd=os.getcwd(), select=a.select, **new_env(a.env),
+                               **({} if a.group is None else {"group": a.group}),
+                               **({"from": int(w)} if (w := nested_in()) else {})),
             "select": lambda: rpc(cmd="select", wid=a.wid),
             "title": lambda: rpc(cmd="title", wid=a.wid,
                                  **({"text": None} if a.clear else

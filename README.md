@@ -244,6 +244,10 @@ owner, a release manager, the members for its parts), `pys group <name>` puts a 
 its product's group, from inside it, or `pys group --wid 7 product-a` from anywhere.
 `pys group` prints a window's group, `--list` every group and its windows, `--clear` takes
 a window out. The group is the window's, kept across a reload and by `pys-sessions`.
+A window opened from another (prefix `c`, `+`, a split, `pys new` typed in it) joins its
+group, so a member a release manager starts lands in its product; `pys new --group G`
+picks one (`""` for none). An agent that starts in a window in no group is told to join
+its product's (the pys rule and the SessionStart hook).
 
 The status line shows the groups together. While one row holds every tab, that row has
 each group led by its name, and the windows in no group led by `others`; when it doesn't,
