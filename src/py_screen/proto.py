@@ -23,6 +23,14 @@ NO_WINDOW = 0xFFFFFFFF
 RELOAD_EXIT = 75  # brain exit code that asks the keeper to start it again at once
 
 
+def utf8_env(env: dict | None = None) -> dict:
+    """The environment for a Python child of pys (the brain, the ON_CHANGE hook): UTF-8 mode,
+    PYTHONUTF8=1, so its files, pipes and stdio are UTF-8 whatever the locale (GBK on a
+    Chinese Windows with Python 3.14; 3.15 is UTF-8 already, PEP 686). Not for the keeper:
+    the shells in the windows inherit its environment, and they are the user's."""
+    return dict(os.environ if env is None else env, PYTHONUTF8="1")
+
+
 def runtime_dir() -> Path:
     """Where sockets (or the names of named pipes) and logs live. PYS_DIR overrides
     (dev builds, tests)."""

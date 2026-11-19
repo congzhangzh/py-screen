@@ -791,14 +791,14 @@ class Brain:
             state["widgets_shown"] = self.widgets_shown
         try:
             tmp = self.state_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(state))
+            tmp.write_text(json.dumps(state), encoding="utf-8")
             tmp.replace(self.state_path)
         except OSError as e:
             log("save_state:", e)
 
     def load_state(self) -> None:
         try:
-            state = json.loads(self.state_path.read_text())
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
         focus: list[Pane] = []
@@ -2384,7 +2384,7 @@ class Brain:
     async def run_hook(self, event: str, timeout: float) -> None:
         """Run ON_CHANGE once, without waiting on it in the loop. Its output goes where
         the brain's does, the server log. PYS_DIR lets a `pys` inside it reach us."""
-        env = dict(os.environ, PYS_EVENT=event, PYS_DIR=str(proto.runtime_dir()))
+        env = proto.utf8_env(dict(os.environ, PYS_EVENT=event, PYS_DIR=str(proto.runtime_dir())))
         argv = cfgmod.command(self.cfg.on_change or [])   # as `pys doctor` shows it
         try:
             p = await asyncio.create_subprocess_exec(
@@ -2462,7 +2462,7 @@ class Brain:
         tmp = path.with_name(path.name + ".tmp")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(rec, indent=1))
+            tmp.write_text(json.dumps(rec, indent=1), encoding="utf-8")
             os.replace(tmp, path)
         except OSError as e:                      # a full disk must not stop the brain
             log("server record:", e)

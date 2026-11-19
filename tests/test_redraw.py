@@ -35,7 +35,7 @@ for i in range(steps):
     if len(buf) >= chunk:
         w.write(buf); w.flush(); buf.clear(); time.sleep(pause)
 w.write(bytes(buf) + b"\x1b[%dB\rDONE" % (R - cy)); w.flush()
-open(out, "w").write("\n".join("".join(r) for r in grid))
+open(out, "w", encoding="utf-8").write("\n".join("".join(r) for r in grid))
 time.sleep(60)
 """
 
@@ -56,7 +56,7 @@ def capture(sess: Session, wid: int) -> list[str]:
 
 def test_hidden_diff_renderer_stays_exact(tmp_path):
     app, expected = tmp_path / "diff.py", tmp_path / "expected"
-    app.write_text(DIFF_APP)
+    app.write_text(DIFF_APP, encoding="utf-8")
     sess = Session("redraw")
     t = Term(PYS + ["attach"], sess.env, 100, 30)
     try:
@@ -69,7 +69,7 @@ def test_hidden_diff_renderer_stays_exact(tmp_path):
         time.sleep(0.5)
         sess.pys("select", str(wid))
         t.wait_for("DONE")
-        want = expected.read_text().splitlines()
+        want = expected.read_text(encoding="utf-8").splitlines()
         got = [line[:32] for line in capture(sess, wid)[:8]]
         assert got == want
     finally:
@@ -80,7 +80,7 @@ def test_hidden_diff_renderer_stays_exact(tmp_path):
 def test_visible_diff_renderer_at_full_speed_stays_exact(tmp_path):
     """~3 MB as fast as the app can write: far more than a frame can parse."""
     app, expected = tmp_path / "diff.py", tmp_path / "expected"
-    app.write_text(DIFF_APP)
+    app.write_text(DIFF_APP, encoding="utf-8")
     sess = Session("redrawv")
     t = Term(PYS + ["attach"], sess.env, 100, 30)
     try:
@@ -88,7 +88,7 @@ def test_visible_diff_renderer_at_full_speed_stays_exact(tmp_path):
         wid = json.loads(sess.pys("new", "--select", sys.executable, str(app), "250000",
                                   "65536", "0", str(expected)))["wid"]
         t.wait_for("DONE", timeout=60)
-        want = expected.read_text().splitlines()
+        want = expected.read_text(encoding="utf-8").splitlines()
         assert [line[:32] for line in capture(sess, wid)[:8]] == want
         t.wait_until(lambda s: s.splitlines()[:8] and
                      [line[:32] for line in s.splitlines()[:8]] == want)   # and on screen

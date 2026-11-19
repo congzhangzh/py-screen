@@ -29,7 +29,7 @@ def test_keys_after_the_focused_window_ended_are_held(tmp_path: Path) -> None:
             time.sleep(0.1)
         assert (tmp_path / "typed-later").exists()
         assert not (tmp_path / "leaked").exists()
-        assert "ended while focused: keys held" in (sess.dir / "server.log").read_text()
+        assert "ended while focused: keys held" in (sess.dir / "server.log").read_text(encoding="utf-8")
     finally:
         t.close()
         sess.kill()

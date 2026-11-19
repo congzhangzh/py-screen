@@ -13,7 +13,7 @@ def pys_doctor(cfg: Path, *args: str) -> subprocess.CompletedProcess:
     import os
     env = dict(os.environ, PYS_CONFIG=str(cfg))
     return subprocess.run(PYS + ["doctor", *args], env=env, capture_output=True, text=True,
-                          timeout=60)
+                          timeout=60, encoding="utf-8", errors="replace")
 
 
 def test_clean_drops_whole_escape_sequences() -> None:
@@ -31,7 +31,7 @@ class Probe:
             raise ValueError("boom")
         return f"cap{ctx['wid']}\\x1b[31m!"
 CAPTION = Probe()
-''')
+''', encoding="utf-8")
     sess = Session("cap")
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env)
@@ -47,7 +47,7 @@ CAPTION = Probe()
 
 def test_a_bad_caption_is_a_config_error(tmp_path: Path, monkeypatch) -> None:
     cfg = tmp_path / "config.py"
-    cfg.write_text("CAPTION = 'folder'\n")
+    cfg.write_text("CAPTION = 'folder'\n", encoding="utf-8")
     monkeypatch.setenv("PYS_CONFIG", str(cfg))
     c = config.load_config()
     assert c.caption is None and c.error == "config error: CAPTION"
@@ -57,16 +57,16 @@ def test_init_writes_the_sample_and_never_over_yours(tmp_path: Path) -> None:
     cfg = tmp_path / "pys" / "config.py"
     assert f"no config at {cfg}" in pys_doctor(cfg).stdout          # where, before there is one
     r = pys_doctor(cfg, "--init")
-    assert r.returncode == 0 and cfg.read_text().startswith("# A sample pys config")
-    cfg.write_text("PREFIX = 'C-b'\n")                       # now it is yours
+    assert r.returncode == 0 and cfg.read_text(encoding="utf-8").startswith("# A sample pys config")
+    cfg.write_text("PREFIX = 'C-b'\n", encoding="utf-8")                       # now it is yours
     r = pys_doctor(cfg, "--init")
     assert r.returncode == 1 and "exists" in r.stderr
-    assert cfg.read_text() == "PREFIX = 'C-b'\n"
+    assert cfg.read_text(encoding="utf-8") == "PREFIX = 'C-b'\n"
     r = pys_doctor(cfg, "--reset")
     assert r.returncode == 0
     kept = [p for p in cfg.parent.iterdir() if p.name.startswith("config.py.")]
-    assert len(kept) == 1 and kept[0].read_text() == "PREFIX = 'C-b'\n"
-    assert cfg.read_text().startswith("# A sample pys config")
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == "PREFIX = 'C-b'\n"
+    assert cfg.read_text(encoding="utf-8").startswith("# A sample pys config")
 
 
 def test_doctor_finds_typos_failing_widgets_and_a_missing_hook(tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ class Broken:
 WIDGETS = [Broken(), clock("%Y")]
 WIDGET = []                                   # a typo: pys never reads it
 ON_CHANGE = ["no-such-command-pys-test"]
-''')
+''', encoding="utf-8")
     r = pys_doctor(cfg)
     assert r.returncode == 1
     assert "✗ widget 0 Broken: RuntimeError: no data" in r.stdout
@@ -90,7 +90,7 @@ ON_CHANGE = ["no-such-command-pys-test"]
 
 def test_doctor_names_the_line_that_does_not_run(tmp_path: Path) -> None:
     cfg = tmp_path / "config.py"
-    cfg.write_text("PREFIX = 'C-a'\nWIDGETS = [load(), nope()]\n")
+    cfg.write_text("PREFIX = 'C-a'\nWIDGETS = [load(), nope()]\n", encoding="utf-8")
     r = pys_doctor(cfg)
     assert r.returncode == 1 and "does not run (line 2): NameError" in r.stdout
 

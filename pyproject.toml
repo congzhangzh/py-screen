@@ -66,3 +66,6 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
 testpaths = ["tests"]
+# UTF-8 everywhere: with PYTHONWARNDEFAULTENCODING=1 (CI sets it), a text open, read_text or
+# subprocess that leaves out encoding= fails the test (tests/conftest.py passes it to pys too)
+filterwarnings = ["error::EncodingWarning"]

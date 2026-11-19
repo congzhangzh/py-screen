@@ -43,7 +43,7 @@ def wait(pred, timeout=5.0):
 def test_splits_list_rename_widgets_reload(tmp_path):
     cfg = tmp_path / "config.py"
     cfg.write_text('WIDGETS = [cmd(["echo", "W1DGET"], every=1), clock("%H:%M")]\n'
-                   'BIND = {"P": ("tops", ["sh"])}\n')
+                   'BIND = {"P": ("tops", ["sh"])}\n', encoding="utf-8")
     sess = Session("m1")
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, 120, 30)
@@ -173,7 +173,7 @@ def test_overlay_owns_the_screen(tmp_path):
     """While the list or the help is up, what runs beneath it stays off the terminal."""
     sess = Session("m1o")
     cfg = tmp_path / "config.py"          # the status line stays up over an overlay, and a
-    cfg.write_text("WIDGETS = []\n")      # widget that ticks redraws it: keep it still here
+    cfg.write_text("WIDGETS = []\n", encoding="utf-8")      # widget that ticks redraws it: keep it still here
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, 120, 30)
     try:
@@ -185,7 +185,7 @@ def test_overlay_owns_the_screen(tmp_path):
         # in a bare pty too). One process lives until the ^C, so the ^C always ends it.
         tick = tmp_path / "tick.py"
         tick.write_text("import time\nwhile 1:\n    print('TICKTICK', flush=True)\n"
-                        "    time.sleep(0.05)\n")
+                        "    time.sleep(0.05)\n", encoding="utf-8")
         t.send(f"{shlex.quote(sys.executable)} {shlex.quote(str(tick))} 2>/dev/null\r")
         t.wait_for("TICKTICK")
         for key, mark in (("w", "Num  Title"), ("?", "py-screen help")):

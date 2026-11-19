@@ -26,13 +26,13 @@ home = os.environ["CLAUDE_CONFIG_DIR"]
 sid = sys.argv[sys.argv.index("--resume") + 1] if "--resume" in sys.argv else str(uuid.uuid4())
 name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else None
 os.makedirs(f"{home}/projects/demo", exist_ok=True)
-with open(f"{home}/projects/demo/{sid}.jsonl", "a") as f:
+with open(f"{home}/projects/demo/{sid}.jsonl", "a", encoding="utf-8") as f:
     f.write(json.dumps({"type": "system", "subtype": "compact_boundary"}) + "\n")
     f.write(json.dumps({"type": "assistant", "message": {"model": "claude-test-1", "usage": {
         "input_tokens": 5, "cache_read_input_tokens": 120000,
         "cache_creation_input_tokens": 1000, "output_tokens": 50}}}) + "\n")
 os.makedirs(f"{home}/sessions", exist_ok=True)
-with open(f"{home}/sessions/{os.getpid()}.json", "w") as f:
+with open(f"{home}/sessions/{os.getpid()}.json", "w", encoding="utf-8") as f:
     json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": name,
                "status": "idle", "entrypoint": "cli"}, f)
 if t := os.environ.get("FAKE_TITLE"):          # an agent that names its window at once
@@ -57,10 +57,10 @@ def setup(tmp_path: Path, tag: str, config: str = "") -> Session:
     sess = Session(tag, shell="/bin/bash")
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    (bin_ / "claude").write_text(FAKE)
+    (bin_ / "claude").write_text(FAKE, encoding="utf-8")
     (bin_ / "claude").chmod(0o755)
     cfg = tmp_path / "config.py"
-    cfg.write_text(config)
+    cfg.write_text(config, encoding="utf-8")
     sess.env.update(PATH=f"{bin_}:{sess.env['PATH']}", CLAUDE_CONFIG_DIR=str(tmp_path / "claude"),
                     PYS_SESSIONS_DIR=str(tmp_path / "snaps"), PYS_CONFIG=str(cfg),
                     HOME=str(tmp_path))
@@ -69,7 +69,7 @@ def setup(tmp_path: Path, tag: str, config: str = "") -> Session:
 
 def run(sess: Session, module: str, *args: str) -> subprocess.CompletedProcess:
     r = subprocess.run([sys.executable, "-m", f"py_screen.agents.{module}", *args],
-                       env=sess.env, capture_output=True, text=True, timeout=60)
+                       env=sess.env, capture_output=True, text=True, timeout=60, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stderr
     return r
 
@@ -112,7 +112,7 @@ def test_save_then_restore_brings_the_session_back(tmp_path: Path) -> None:
                            "--permission-mode", "plan", "--secret-flag")
         sess.pys("title", "--wid", str(win["wid"]), "builder")
         run(sess, "sessions", "save")
-        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text())
+        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text(encoding="utf-8"))
         w = [x for x in snap["windows"] if x["wid"] == win["wid"]][0]
         ag = w["agent"]
         assert ag["kind"] == "claude" and ag["name"] == "helper"
@@ -131,7 +131,7 @@ def test_save_then_restore_brings_the_session_back(tmp_path: Path) -> None:
         names = wait(lambda: [x["name"] for x in json.loads(sess.pys("ls", "--json"))["windows"]
                               if x["name"].startswith("↺")])
         assert names == ["↺builder"]
-        resumed = wait(lambda: [json.loads(f.read_text()) for f in
+        resumed = wait(lambda: [json.loads(f.read_text(encoding="utf-8")) for f in
                                 Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")])
         assert resumed[0]["sessionId"] == sid and resumed[0]["name"] == "helper"
         pid = resumed[0]["pid"]
@@ -154,10 +154,10 @@ def test_forensic_takes_folders_and_titles_from_the_server_record(tmp_path: Path
         ls = json.loads(sess.pys("ls", "--json"))
         sess.pys("title", "--wid", str(ls["windows"][0]["wid"]), "sleeper")
         records = sess.dir / "state" / "pys" / "servers"
-        rec = wait(lambda: [f for f in records.glob("*.json") if "sleeper" in f.read_text()])[0]
+        rec = wait(lambda: [f for f in records.glob("*.json") if "sleeper" in f.read_text(encoding="utf-8")])[0]
         # a crash, not a kill: no hook runs, no snapshot is taken. The record's pid is the
         # keeper's (`ls --json` gives the brain's, which the keeper would just restart)
-        keeper = json.loads(rec.read_text())["pid"]
+        keeper = json.loads(rec.read_text(encoding="utf-8"))["pid"]
         for pid in [w["pid"] for w in ls["windows"]] + [keeper, ls["pid"]]:
             os.kill(pid, signal.SIGKILL)
         wait(lambda: subprocess.run(PYS + ["ls"], env=sess.env, capture_output=True).returncode)
@@ -165,7 +165,7 @@ def test_forensic_takes_folders_and_titles_from_the_server_record(tmp_path: Path
         out = run(sess, "sessions", "forensic", "--write").stdout
         assert "sleeper" in out and str(work.resolve()) in out
         assert "from the server record" in out
-        snap = json.loads(next((tmp_path / "snaps").glob("*-forensic/windows.json")).read_text())
+        snap = json.loads(next((tmp_path / "snaps").glob("*-forensic/windows.json")).read_text(encoding="utf-8"))
         assert snap["record"] and snap["windows"][0]["cwd"] == str(work.resolve())
     finally:
         sess.kill()
@@ -177,7 +177,7 @@ def test_skills_install_links_and_never_replaces(tmp_path: Path) -> None:
     (dest / "pys-restore").mkdir(parents=True)              # the user's own version
     assert listing.main(["skills", "--install", "--dir", str(dest)]) == 0
     assert (dest / "pys-drive").is_symlink()
-    assert (dest / "pys-drive" / "SKILL.md").read_text().startswith("---\nname: pys-drive")
+    assert (dest / "pys-drive" / "SKILL.md").read_text(encoding="utf-8").startswith("---\nname: pys-drive")
     assert not (dest / "pys-restore").is_symlink()
     assert listing.main(["skills", "--install", "--dir", str(dest)]) == 0   # twice is fine
 
@@ -200,7 +200,7 @@ def make_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo, wt = tmp_path / "repo", tmp_path / "repo-topic"
     g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
     subprocess.run([*g, "init", "-q", "-b", "main", str(repo)], check=True)
-    (repo / "a.txt").write_text("a\n")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
     subprocess.run([*g, "-C", str(repo), "add", "a.txt"], check=True)
     subprocess.run([*g, "-C", str(repo), "commit", "-q", "-m", "one"], check=True)
     subprocess.run([*g, "-C", str(repo), "worktree", "add", "-q", "-b", "topic", str(wt)], check=True)
@@ -216,8 +216,8 @@ def open_in(sess: Session, folder: Path) -> int:
 def test_where_shows_branch_worktree_and_changes(tmp_path: Path) -> None:
     sess = setup(tmp_path, "wh")
     repo, wt = make_repo(tmp_path)
-    (wt / "a.txt").write_text("changed\n")
-    (wt / "new.txt").write_text("new\n")
+    (wt / "a.txt").write_text("changed\n", encoding="utf-8")
+    (wt / "new.txt").write_text("new\n", encoding="utf-8")
     try:
         a, b = open_in(sess, repo), open_in(sess, wt)
         rows = {r["window"]: r for r in json.loads(run(sess, "listing", "where", "--json").stdout)}
@@ -237,7 +237,7 @@ def test_restore_says_which_branch_and_when_its_worktree_is_gone(tmp_path: Path)
     try:
         b = open_in(sess, wt)
         run(sess, "sessions", "save")
-        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text())
+        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text(encoding="utf-8"))
         g = [w for w in snap["windows"] if w["wid"] == b][0]["git"]
         assert g["branch"] == "topic" and g["worktree"]
         sess.pys("kill", check=False)
@@ -261,11 +261,11 @@ def test_where_follows_the_agents_writes_not_the_folder_it_started_in(tmp_path: 
     repo, wt = make_repo(tmp_path)
     try:
         win = start_claude(sess, repo, "--name", "helper")
-        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text(encoding="utf-8"))
         t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
         use = lambda name, inp: json.dumps({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": name, "input": inp}]}}) + "\n"
-        with t.open("a") as f:
+        with t.open("a", encoding="utf-8") as f:
             f.write(use("Bash", {"command": f"cd {tmp_path} && ls"}))         # no repo: skipped
             f.write(use("Edit", {"file_path": str(wt / "a.txt")}))
             f.write(use("Read", {"file_path": str(repo / "a.txt")}))           # a read is no work
@@ -283,13 +283,13 @@ def test_a_snapshot_keeps_where_the_agent_worked(tmp_path: Path) -> None:
     repo, wt = make_repo(tmp_path)
     try:
         win = start_claude(sess, repo, "--name", "helper")
-        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text(encoding="utf-8"))
         t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
-        with t.open("a") as f:
+        with t.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
                     "name": "Write", "input": {"file_path": str(wt / "b.txt")}}]}}) + "\n")
         run(sess, "sessions", "save")
-        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text())
+        snap = json.loads(next((tmp_path / "snaps").glob("*/windows.json")).read_text(encoding="utf-8"))
         w = [x for x in snap["windows"] if x["wid"] == win["wid"]][0]
         assert w["works_in"] == str(wt.resolve()) and w["git"]["branch"] == "topic"
         assert w["agent"]["cwd"] == str(repo.resolve())      # it resumes where it started
@@ -309,13 +309,13 @@ def test_branch_widget_follows_the_agent(tmp_path: Path, monkeypatch) -> None:
     repo, wt = make_repo(tmp_path)
     try:
         assert widget.describe({"cwd": str(repo)}) == "main"
-        (repo / "a.txt").write_text("changed\n")
+        (repo / "a.txt").write_text("changed\n", encoding="utf-8")
         assert widget.describe({"cwd": str(repo)}) == "main 1 mod"
         assert widget.describe({"cwd": str(tmp_path)}) == ""            # no repo: nothing
         win = start_claude(sess, repo, "--name", "helper")
-        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text(encoding="utf-8"))
         t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
-        with t.open("a") as f:
+        with t.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
                     "name": "Edit", "input": {"file_path": str(wt / "a.txt")}}]}}) + "\n")
         # the window's shell sits in repo (main); the agent in it works in the worktree
@@ -331,7 +331,7 @@ class Probe:
     every, text = 0.3, ""
     async def update(self, ctx):
         import os                                   # whole or not at all: the test reads
-        open({str(out) + ".tmp"!r}, "w").write(json.dumps(ctx))   # it while it is written
+        open({str(out) + ".tmp"!r}, "w", encoding="utf-8").write(json.dumps(ctx))   # it while it is written
         os.replace({str(out) + ".tmp"!r}, {str(out)!r})
         return ""
 WIDGETS = [Probe()]
@@ -340,7 +340,7 @@ WIDGETS = [Probe()]
         subprocess.run(PYS + ["new", "sleep", "600"], env=sess.env, cwd=tmp_path, check=True,
                        capture_output=True, timeout=15)
         w = json.loads(sess.pys("ls", "--json"))["windows"][0]
-        ctx = wait(lambda: out.exists() and (d := json.loads(out.read_text())).get("pid") and d)
+        ctx = wait(lambda: out.exists() and (d := json.loads(out.read_text(encoding="utf-8"))).get("pid") and d)
         assert ctx == {"cwd": str(tmp_path.resolve()), "wid": w["wid"], "pid": w["pid"]}
     finally:
         sess.kill()
@@ -374,9 +374,9 @@ def test_caption_names_where_the_agent_works(tmp_path: Path, monkeypatch) -> Non
         assert widget.caption_text({"cwd": str(tmp_path / "bin")}) == "~/bin"   # no repo
         assert widget.caption_text({"cwd": str(repo)}) == "~/repo  main"
         win = start_claude(sess, repo, "--name", "helper")
-        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text())
+        s = json.loads(next(Path(sess.env["CLAUDE_CONFIG_DIR"], "sessions").glob("*.json")).read_text(encoding="utf-8"))
         t = Path(sess.env["CLAUDE_CONFIG_DIR"], "projects", "demo", f"{s['sessionId']}.jsonl")
-        with t.open("a") as f:
+        with t.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use",
                     "name": "Edit", "input": {"file_path": str(wt / "a.txt")}}]}}) + "\n")
         text = widget.caption_text({"cwd": str(repo), "pid": win["pid"]})
@@ -404,7 +404,7 @@ def test_the_psutil_backend_answers_as_proc_does(tmp_path: Path) -> None:
     # open for an instant, and two reads one after the other would see two moments (CI)
     child = subprocess.Popen([sys.executable, "-c", "import time; print('ready', flush=True); "
                               "time.sleep(30)"], cwd=tmp_path, env=dict(os.environ, MY_VAR="kept"),
-                             stdout=subprocess.PIPE, text=True)
+                             stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     try:
         me = os.getpid()
         assert child.stdout.readline() == "ready\n"

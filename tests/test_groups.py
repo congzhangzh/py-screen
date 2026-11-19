@@ -44,7 +44,7 @@ def test_group_names_and_listing():
         assert sess.pys("group", "--wid", str(b)).strip() == "product-b"
         assert sess.pys("group", "--list").splitlines() == [f"product-a: {a} {c}", f"product-b: {b}"]
         r = subprocess.run(PYS + ["group", "--wid", str(a), "no spaces"], env=sess.env,
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
         assert r.returncode and "letters, digits" in r.stderr
         sess.pys("group", "--wid", str(b), "--clear")
         assert ls(sess)["windows"][1]["group"] is None
@@ -101,7 +101,7 @@ def test_team_lists_a_group_with_roles():
         sess.pys("title", "--wid", str(c), "rel-product-a-g2 #4 busy")
         team = [sys.executable, "-m", "py_screen.agents.listing", "team"]
         r = subprocess.run(team + ["--group", "product-a", "--json"], env=sess.env,
-                           capture_output=True, text=True, timeout=30, check=True)
+                           capture_output=True, text=True, timeout=30, check=True, encoding="utf-8", errors="replace")
         got = json.loads(r.stdout)
         assert got["group"] == "product-a"
         assert [(w["window"], w["role"]) for w in got["windows"]] == [(a, "po"), (c, "rel")]
@@ -112,13 +112,13 @@ def test_team_lists_a_group_with_roles():
         sess.pys("group", "--wid", str(d), "shared")
         for g in ("product-a", "product-b"):
             r = subprocess.run(team + ["--group", g, "--json"], env=sess.env,
-                               capture_output=True, text=True, timeout=30, check=True)
+                               capture_output=True, text=True, timeout=30, check=True, encoding="utf-8", errors="replace")
             rows = json.loads(r.stdout)["windows"]
             assert (rows[-1]["window"], rows[-1]["role"], rows[-1]["shared"]) == (d, "edu", True)
             assert not any(w["shared"] for w in rows[:-1])
         # from inside a window: its own group
         env = dict(sess.env, PYS_WINDOW=str(b), PYS_SESSION=str(sess.dir))
-        r = subprocess.run(team, env=env, capture_output=True, text=True, timeout=30, check=True)
+        r = subprocess.run(team, env=env, capture_output=True, text=True, timeout=30, check=True, encoding="utf-8", errors="replace")
         assert r.stdout.startswith("group product-b:")
     finally:
         t.close()

@@ -100,7 +100,7 @@ def test_marks_on_the_status_line() -> None:
         t.wait_for(f" {other}! ")
         # the window in front of you is never marked
         r = subprocess.run(PYS + ["attn", "done", "--wid", str(first)], env=sess.env,
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
         assert r.returncode == 0 and "looking at" in r.stderr and mark(first) is None
         # a bell in a window behind marks it by itself
         sess.pys("attn", "--clear", "--wid", str(other))
@@ -115,7 +115,7 @@ def test_marks_on_the_status_line() -> None:
         hook = [sys.executable, "-m", "py_screen.agents.attn"]
         for event, want in (("UserPromptSubmit", None), ("Stop", "done")):
             subprocess.run(hook, env=env, input=json.dumps({"hook_event_name": event}),
-                           text=True, timeout=15, check=True)
+                           text=True, timeout=15, check=True, encoding="utf-8", errors="replace")
             assert mark(other) == want
         # prefix ! goes to it, and that clears it
         t.send(b"\x1d!")
@@ -150,7 +150,7 @@ def test_an_ask_outlives_the_stop_hook() -> None:
 
         def event(name):
             subprocess.run(hook, env=env, input=json.dumps({"hook_event_name": name}),
-                           text=True, timeout=15, check=True)
+                           text=True, timeout=15, check=True, encoding="utf-8", errors="replace")
 
         sess.pys("attn", "ask", "--wid", str(other), "--why", "go for the release?")
         event("Stop")
@@ -172,7 +172,7 @@ def test_the_hook_outside_pys_does_nothing() -> None:
            if k not in ("PYS_WINDOW", "PYS_SESSION")}
     r = subprocess.run([sys.executable, "-m", "py_screen.agents.attn"], env=env,
                        input='{"hook_event_name": "Stop"}', capture_output=True, text=True,
-                       timeout=15)
+                       timeout=15, encoding="utf-8", errors="replace")
     assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
 
 
@@ -181,7 +181,7 @@ def test_setup_adds_the_hooks_once(tmp_path) -> None:
     claude = tmp_path / "claude"
     claude.mkdir()
     (claude / "settings.json").write_text(json.dumps({"hooks": {"Stop": [
-        {"hooks": [{"type": "command", "command": "echo mine"}]}]}}))
+        {"hooks": [{"type": "command", "command": "echo mine"}]}]}}), encoding="utf-8")
     setup(tmp_path, "--yes")
     s = json.loads((claude / "settings.json").read_text(encoding="utf-8"))
     for event in attn.EVENTS:

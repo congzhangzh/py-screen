@@ -49,11 +49,11 @@ if "--resume" not in sys.argv:               # a new session in a new folder ask
 sid = sys.argv[sys.argv.index("--resume") + 1] if "--resume" in sys.argv else str(uuid.uuid4())
 name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else None
 os.makedirs(os.path.join(home, "projects", "demo"), exist_ok=True)
-with open(os.path.join(home, "projects", "demo", sid + ".jsonl"), "a") as f:
+with open(os.path.join(home, "projects", "demo", sid + ".jsonl"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"type": "assistant", "message": {"model": "claude-test-1", "usage": {
         "input_tokens": 5, "cache_read_input_tokens": 1000}}}) + "\n")
 os.makedirs(os.path.join(home, "sessions"), exist_ok=True)
-with open(os.path.join(home, "sessions", f"{os.getpid()}.json"), "w") as f:
+with open(os.path.join(home, "sessions", f"{os.getpid()}.json"), "w", encoding="utf-8") as f:
     json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": name,
                "status": "idle"}, f)
 if "--resume" not in sys.argv:               # names its window as Claude's Bash tool would:
@@ -79,16 +79,16 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
     work, bin_, claude_home = tmp_path / "work", tmp_path / "bin", tmp_path / "claude"
     for d in (work, bin_):
         d.mkdir()
-    (bin_ / "fake_claude.py").write_text(FAKE)
+    (bin_ / "fake_claude.py").write_text(FAKE, encoding="utf-8")
     if WIN:                                   # what npm installs: claude.cmd on PATH
         (bin_ / "claude.cmd").write_text(
-            f'@"{sys.executable}" "{bin_ / "fake_claude.py"}" %*\r\n')
+            f'@"{sys.executable}" "{bin_ / "fake_claude.py"}" %*\r\n', encoding="utf-8")
     else:
         (bin_ / "claude").write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{bin_ / "fake_claude.py"}" "$@"\n')
+            f'#!/bin/sh\nexec "{sys.executable}" "{bin_ / "fake_claude.py"}" "$@"\n', encoding="utf-8")
         (bin_ / "claude").chmod(0o755)
     cfg = tmp_path / "config.py"
-    cfg.write_text('SESSIONS_KEEP_ENV = ["MY_VAR"]\n')
+    cfg.write_text('SESSIONS_KEEP_ENV = ["MY_VAR"]\n', encoding="utf-8")
     env = dict(os.environ, PYS_DIR=str(run_dir), PYS_CONFIG=str(cfg),
                XDG_STATE_HOME=str(tmp_path / "state"), PYS_PREFIX="C-]",
                CLAUDE_CONFIG_DIR=str(claude_home), PYS_SESSIONS_DIR=str(tmp_path / "snaps"),
@@ -106,7 +106,7 @@ def test_agents_and_sessions_on_any_system(tmp_path: Path) -> None:
         if check and r.returncode:
             log = run_dir / "server.log"
             raise AssertionError(f"{args} -> {r.returncode}\n{r.stdout}\n{r.stderr}\n"
-                                 + (log.read_text(errors="replace") if log.exists() else ""))
+                                 + (log.read_text(errors="replace", encoding="utf-8") if log.exists() else ""))
         return r
 
     def pys(*a: str, check: bool = True):

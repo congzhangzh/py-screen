@@ -205,7 +205,7 @@ class Keeper:
     async def run_brain(self) -> None:
         while not self.stopping.is_set():
             self.brain_proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "py_screen", "_brain")
+                sys.executable, "-m", "py_screen", "_brain", env=proto.utf8_env())
             code = await self.brain_proc.wait()
             if self.stopping.is_set():
                 break

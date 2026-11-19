@@ -61,7 +61,7 @@ def test_tabs_wrap_onto_a_second_row_and_give_it_back():
 
 def test_one_status_row_when_the_config_says_so(tmp_path):
     cfg = tmp_path / "config.py"
-    cfg.write_text("STATUS_LINES = 1\n")
+    cfg.write_text("STATUS_LINES = 1\n", encoding="utf-8")
     sess = Session("rows1")
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, COLS, ROWS)

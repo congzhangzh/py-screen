@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the pty harness
 
 def test_no_caption_while_a_window_fills_the_screen(tmp_path):
     cfg = tmp_path / "config.py"
-    cfg.write_text("CAPTIONS = False\n")
+    cfg.write_text("CAPTIONS = False\n", encoding="utf-8")
     sess = Session("caps")
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, 80, 20)

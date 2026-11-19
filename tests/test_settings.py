@@ -15,15 +15,15 @@ from py_screen import settings
 def test_the_file_reads_back_only_plain_values(tmp_path):
     p = tmp_path / "50-settings.py"
     settings.write({"STATUS_LINES": 3, "BUTTONS": False}, p)
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     assert text.index("BUTTONS = False") < text.index("STATUS_LINES = 3")   # panel order
     assert settings.read(p) == {"BUTTONS": False, "STATUS_LINES": 3}
-    p.write_text(text + "MOUSE = 'no'\nSTATUS_LINES = 9\nimport os\nWIDGETS = []\n")
+    p.write_text(text + "MOUSE = 'no'\nSTATUS_LINES = 9\nimport os\nWIDGETS = []\n", encoding="utf-8")
     # not a value it offers: left out (the config loader still runs the file, so 9 counts
     # there; the panel's next write keeps only its own lines)
     assert settings.read(p) == {"BUTTONS": False, "STATUS_LINES": 3}
     assert settings.read(tmp_path / "none.py") == {}
-    p.write_text("BUTTONS = (")                           # broken: as if absent
+    p.write_text("BUTTONS = (", encoding="utf-8")                           # broken: as if absent
     assert settings.read(p) == {}
     assert not list(tmp_path.glob(".*.tmp"))              # the atomic write left nothing
 
@@ -36,7 +36,7 @@ def test_the_about_line():
     repo = Path(about.__file__).resolve().parents[2]
     if (repo / ".git").exists():                          # tests run from a checkout
         sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=7", "HEAD"],
-                             capture_output=True, text=True).stdout.strip()
+                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
         assert sha in about.version() and "0.1.0" not in about.version()
 
 
@@ -76,7 +76,7 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
     from harness import PYS, Session, Term
     from test_mouse import click, wait
     cfg = tmp_path / "config.py"
-    cfg.write_text("STATUS_LINES = 2\n")
+    cfg.write_text("STATUS_LINES = 2\n", encoding="utf-8")
     sess = Session("settings")
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, 100, 20)
@@ -95,7 +95,7 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         assert " rule " in t.text()                     # the panel is cut at 20 rows; the
         # whole list is test_the_files_list's
         t.send(b"\r")                                     # row 1: the buttons, off
-        wait(lambda: kept.exists() and "BUTTONS = False" in kept.read_text(),
+        wait(lambda: kept.exists() and "BUTTONS = False" in kept.read_text(encoding="utf-8"),
              what=lambda: t.text())
         wait(lambda: "set here" in t.text(), what=lambda: t.text())
         t.send(b"q")
@@ -105,22 +105,22 @@ def test_the_panel_changes_and_keeps_a_setting(tmp_path):
         t.wait_for(" py-screen settings")
         y = settings.KEYS.index("STATUS_LINES") + 2
         click(t, 10, y)                                   # a click on the row: 2 -> 3
-        wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "STATUS_LINES = 3" in kept.read_text(encoding="utf-8"), what=lambda: kept.read_text(encoding="utf-8"))
         # the file is written before the panel redraws: wait for the screen too
         wait(lambda: "− 3 +" in t.text().splitlines()[y], what=lambda: t.text())
         click(t, t.text().splitlines()[y].rindex("+"), y)   # +: one up
-        wait(lambda: "STATUS_LINES = 4" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "STATUS_LINES = 4" in kept.read_text(encoding="utf-8"), what=lambda: kept.read_text(encoding="utf-8"))
         wait(lambda: "− 4 +" in t.text().splitlines()[y], what=lambda: t.text())
         click(t, t.text().splitlines()[y].index("−"), y)  # −: one down
-        wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "STATUS_LINES = 3" in kept.read_text(encoding="utf-8"), what=lambda: kept.read_text(encoding="utf-8"))
         t.send(b"5")                                      # a digit sets it
-        wait(lambda: "STATUS_LINES = 5" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "STATUS_LINES = 5" in kept.read_text(encoding="utf-8"), what=lambda: kept.read_text(encoding="utf-8"))
         t.send(b"+")                                      # the top: stays, and says so
         wait(lambda: "the most here; more in config.py" in t.text(), what=lambda: t.text())
         t.send(b"\x1b[D")                                 # ←: one down
-        wait(lambda: "STATUS_LINES = 4" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "STATUS_LINES = 4" in kept.read_text(encoding="utf-8"), what=lambda: kept.read_text(encoding="utf-8"))
         t.send(b"3")
-        wait(lambda: "STATUS_LINES = 3" in kept.read_text(), what=lambda: kept.read_text())
+        wait(lambda: "STATUS_LINES = 3" in kept.read_text(encoding="utf-8"), what=lambda: kept.read_text(encoding="utf-8"))
         click(t, 10, 15)                                  # off the rows: closes
         wait(lambda: " py-screen settings" not in t.text(), what=lambda: t.text())
 
@@ -143,7 +143,7 @@ def test_the_motto_in_the_blank(tmp_path, on):
     from harness import PYS, Session, Term
     from py_screen.about import MOTTO
     cfg = tmp_path / "config.py"
-    cfg.write_text(f"SLOGAN = {on}\n")
+    cfg.write_text(f"SLOGAN = {on}\n", encoding="utf-8")
     for cols, want in ((100, on), (40, False)):
         sess = Session("motto")
         sess.env["PYS_CONFIG"] = str(cfg)

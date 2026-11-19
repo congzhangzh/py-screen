@@ -38,10 +38,10 @@ def attach(sess: Session, cols: int, rows: int) -> tuple[Term, Counting]:
 def test_long_widget_is_cut_and_never_scrolls(tmp_path):
     long = "PR" + "".join(f" #{16000 + i} ✓ fix-thing-{i}" for i in range(40))
     widget = tmp_path / "prs.py"
-    widget.write_text(f"print({long!r})\n")
+    widget.write_text(f"print({long!r})\n", encoding="utf-8")
     cfg = tmp_path / "config.py"
     cfg.write_text(f"WIDGETS = [cmd([{sys.executable!r}, {str(widget)!r}], every=1),\n"
-                   f"           cmd(['echo', 'CLK'], every=0.2)]\n")
+                   f"           cmd(['echo', 'CLK'], every=0.2)]\n", encoding="utf-8")
     sess = Session("bottom")
     sess.env["PYS_CONFIG"] = str(cfg)
     t, scr = attach(sess, 120, 30)
@@ -82,7 +82,7 @@ def status_on_bottom_only(scr: Counting) -> bool:
 
 def test_two_clients_each_get_a_view_that_fits(tmp_path):
     cfg = tmp_path / "config.py"
-    cfg.write_text("WIDGETS = [cmd(['echo', 'CLK'], every=0.2)]\n")
+    cfg.write_text("WIDGETS = [cmd(['echo', 'CLK'], every=0.2)]\n", encoding="utf-8")
     sess = Session("views")
     sess.env["PYS_CONFIG"] = str(cfg)
     small, s_scr = attach(sess, 100, 24)                # like a laptop over ssh

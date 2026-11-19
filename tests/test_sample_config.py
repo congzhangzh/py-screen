@@ -24,8 +24,8 @@ SAMPLE = Path(py_screen.__file__).parent / "sample_config.py"
 
 
 def test_pys_prints_the_sample():
-    out = subprocess.run(PYS + ["sample-config"], capture_output=True, text=True, timeout=15)
-    assert out.returncode == 0 and out.stdout == SAMPLE.read_text()
+    out = subprocess.run(PYS + ["sample-config"], capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
+    assert out.returncode == 0 and out.stdout == SAMPLE.read_text(encoding="utf-8")
 
 
 def test_sample_loads(monkeypatch):
@@ -71,7 +71,7 @@ def test_disk_counts_whole_physical_disks_once(tmp_path, monkeypatch):
 
 def sample_ns(**over):
     ns = {"cmd": lambda *a, **k: None, "load": lambda *a, **k: None}
-    exec(SAMPLE.read_text(), ns)
+    exec(SAMPLE.read_text(encoding="utf-8"), ns)
     ns.update(over)                    # the widgets read PROC / psutil from here at call time
     return ns
 

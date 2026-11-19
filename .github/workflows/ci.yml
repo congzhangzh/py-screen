@@ -38,14 +38,20 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
       - uses: astral-sh/setup-uv@v6
       - run: uv python install 3.14
+      # Built first, outside the net below: a build backend's own open() is not ours to fix.
+      - run: uv sync -q
+      # The net: any text I/O that falls back to the locale's encoding (GBK on a Chinese
+      # Windows) raises EncodingWarning as an error, here and in every pys process a test starts.
       - name: The suite on vterm (the default)
-        run: uv run pytest -q $TESTS
+        run: uv run --no-sync pytest -q $TESTS
         env:
           TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py tests/test_agents_smoke.py' || '' }}
+          PYTHONWARNDEFAULTENCODING: "1"
       - name: The suite on pyte
-        run: PYS_TERM=pyte uv run pytest -q $TESTS
+        run: PYS_TERM=pyte uv run --no-sync pytest -q $TESTS
         env:
           TESTS: ${{ runner.os == 'Windows' && 'tests/test_rpc_smoke.py tests/test_agents_smoke.py' || '' }}
+          PYTHONWARNDEFAULTENCODING: "1"
 
   sanitize:
     runs-on: ubuntu-latest

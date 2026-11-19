@@ -53,7 +53,7 @@ if USE_PROC:
             if not p.name.isdigit():
                 continue
             try:
-                stat = (p / "stat").read_text()
+                stat = (p / "stat").read_text(encoding="utf-8")
                 ppid = int(stat.rsplit(")", 1)[1].split()[1])
             except (OSError, ValueError, IndexError):
                 continue
@@ -62,7 +62,7 @@ if USE_PROC:
 
     def parent(pid: int) -> int | None:
         try:
-            return int((PROC / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()[1])
+            return int((PROC / str(pid) / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[1])
         except (OSError, ValueError, IndexError):
             return None
 
@@ -75,7 +75,7 @@ if USE_PROC:
 
     def comm(pid: int) -> str:
         try:
-            return (PROC / str(pid) / "comm").read_text().strip()
+            return (PROC / str(pid) / "comm").read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
             return ""
 
@@ -116,7 +116,7 @@ if USE_PROC:
         """Running, not a zombie: `kill(pid, 0)` succeeds on a zombie too, and an orphan
         stays one for good where PID 1 doesn't reap (a container without an init)."""
         try:
-            stat = (PROC / str(pid) / "stat").read_text()
+            stat = (PROC / str(pid) / "stat").read_text(encoding="utf-8")
         except OSError:
             return False
         try:

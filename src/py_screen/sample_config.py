@@ -39,7 +39,7 @@ PROC = os.path.exists("/proc/stat")    # Linux: read the kernel's counters direc
 def proc(path):
     """A /proc file's text, or None if it can't be read."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return f.read()
     except OSError:
         return None

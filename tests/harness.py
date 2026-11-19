@@ -48,7 +48,7 @@ class Session:
 
     def pys(self, *args: str, check: bool = True) -> str:
         r = subprocess.run(PYS + list(args), env=self.env, capture_output=True,
-                           text=True, timeout=15)
+                           text=True, timeout=15, encoding="utf-8", errors="replace")
         if check and r.returncode:
             raise RuntimeError(f"pys {args}: {r.stderr}")
         return r.stdout

@@ -20,7 +20,7 @@ mode, out = sys.argv[1], sys.argv[2]
 saved = termios.tcgetattr(0)
 tty.setraw(0)
 os.write(1, b"\x1b[?1000h" + (b"\x1b[?1006h" if mode == "sgr" else b"") + b"READY-" + mode.encode())
-with open(out, "a") as f:
+with open(out, "a", encoding="utf-8") as f:
     while True:
         d = os.read(0, 1024)
         if not d or d == b"q":
@@ -83,12 +83,12 @@ def wait(pred, timeout=5.0, what=lambda: ""):
 
 
 def text(path) -> str:
-    return path.read_text() if path.exists() else "<no file>"
+    return path.read_text(encoding="utf-8") if path.exists() else "<no file>"
 
 
 def test_click_drag_wheel_and_app_coordinates(tmp_path):
     app = tmp_path / "app.py"
-    app.write_text(APP)
+    app.write_text(APP, encoding="utf-8")
     log = tmp_path / "log"
     sess = Session("mouse")
     t = Term(PYS + ["attach"], sess.env, 120, 30)
@@ -114,15 +114,15 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         t.wait_for("READY-sgr")                       # the app has asked for the mouse
         click(t, right["x"] + 4, 2)
         wait(lambda: "<0;5;3m" in text(log), what=lambda: text(log))
-        assert "\\x1b[<0;5;3M" in log.read_text()
+        assert "\\x1b[<0;5;3M" in log.read_text(encoding="utf-8")
         assert next(p for p in panes(sess) if p["focus"])["wid"] == right["wid"]
 
         click(t, 3, 3)                                # back to the left pane...
         wait(lambda: sorted(panes(sess), key=lambda p: p["x"])[0]["focus"], what=lambda: panes(sess))
-        n = log.read_text().count("\n")
+        n = log.read_text(encoding="utf-8").count("\n")
         t.send(sgr(65, right["x"] + 1, 4))            # ...the wheel goes to the pane under it
         wait(lambda: text(log).count("\n") > n, what=lambda: text(log))
-        assert "<65;2;5M" in log.read_text()
+        assert "<65;2;5M" in log.read_text(encoding="utf-8")
         assert sorted(panes(sess), key=lambda p: p["x"])[0]["focus"]   # focus didn't move
 
         # X10 form for an app that didn't ask for SGR
@@ -132,7 +132,7 @@ def test_click_drag_wheel_and_app_coordinates(tmp_path):
         t.wait_for("READY-x10")                       # not a fixed sleep: a slow start
         click(t, right["x"] + 4, 2)                   # would miss the click (the flake)
         wait(lambda: text(log2).count("\n") >= 1, what=lambda: text(log2) + "\n" + t.text())
-        assert "\\x1b[M %#" in log2.read_text()      # button 0, x 5, y 3, each + 32
+        assert "\\x1b[M %#" in log2.read_text(encoding="utf-8")      # button 0, x 5, y 3, each + 32
 
         # The status line picks a window
         sess.pys("new")
@@ -254,7 +254,7 @@ def test_no_buttons_when_the_config_says_so(tmp_path):
     """BUTTONS = False: no + ▾ ? after " pys ", the tabs start right after it and a click
     on one still selects it."""
     cfg = tmp_path / "config.py"
-    cfg.write_text("BUTTONS = False\n")
+    cfg.write_text("BUTTONS = False\n", encoding="utf-8")
     sess = Session("nobtn")
     sess.env["PYS_CONFIG"] = str(cfg)
     t = Term(PYS + ["attach"], sess.env, 100, 20)

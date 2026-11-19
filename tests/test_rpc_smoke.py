@@ -49,7 +49,7 @@ def test_rpc_smoke(tmp_path: Path) -> None:
                            text=True, encoding="utf-8", timeout=30)   # pys prints UTF-8
         if check and r.returncode:
             raise AssertionError(f"pys {args} -> {r.returncode}\n{r.stdout}\n{r.stderr}\n"
-                                 + (run_dir / "server.log").read_text(errors="replace"))
+                                 + (run_dir / "server.log").read_text(errors="replace", encoding="utf-8"))
         return r
 
     def screen(wid: int) -> str:

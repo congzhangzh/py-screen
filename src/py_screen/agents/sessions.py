@@ -557,11 +557,11 @@ def cmd_install(a) -> int:
     exe = shutil.which("pys-sessions") or str(Path(sys.argv[0]).resolve())
     (ud / "pys-sessions.service").write_text(
         "[Unit]\nDescription=pys-sessions: snapshot the pys windows\n\n"
-        f"[Service]\nType=oneshot\nExecStart={exe} save --quiet\n")
+        f"[Service]\nType=oneshot\nExecStart={exe} save --quiet\n", encoding="utf-8")
     (ud / "pys-sessions.timer").write_text(
         "[Unit]\nDescription=pys-sessions every 2 minutes\n\n"
         "[Timer]\nOnBootSec=1min\nOnUnitActiveSec=2min\nAccuracySec=15s\n\n"
-        "[Install]\nWantedBy=timers.target\n")
+        "[Install]\nWantedBy=timers.target\n", encoding="utf-8")
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     subprocess.run(["systemctl", "--user", "enable", "--now", "pys-sessions.timer"], check=True)
     print("installed: systemctl --user list-timers pys-sessions.timer")

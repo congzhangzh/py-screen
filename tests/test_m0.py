@@ -59,7 +59,7 @@ def test_attach_detach_reattach(sess):
 
 
 def vim_pid(shell_pid: int) -> int | None:
-    r = subprocess.run(["pgrep", "-P", str(shell_pid), "vim"], capture_output=True, text=True)
+    r = subprocess.run(["pgrep", "-P", str(shell_pid), "vim"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     return int(r.stdout.split()[0]) if r.stdout.strip() else None
 
 
@@ -88,7 +88,7 @@ def test_reload_keeps_vim(sess, record_property):
         sess.pys("reload")
         while True:                          # until a new brain answers
             out = subprocess.run(PYS + ["ls", "--json"], env=sess.env,
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace")
             if out.returncode == 0 and json.loads(out.stdout)["pid"] != brain:
                 brain = json.loads(out.stdout)["pid"]
                 break

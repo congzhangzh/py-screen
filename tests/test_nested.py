@@ -14,7 +14,7 @@ from harness import PYS, Session, Term, session_dir
 def attach(env: dict) -> subprocess.CompletedProcess:
     # no terminal on stdin: the guard comes first, so a passing guard ends at "needs a terminal"
     return subprocess.run(PYS + ["attach"], env=env, stdin=subprocess.DEVNULL,
-                          capture_output=True, text=True, timeout=15, check=False)
+                          capture_output=True, text=True, timeout=15, check=False, encoding="utf-8", errors="replace")
 
 
 @pytest.fixture
