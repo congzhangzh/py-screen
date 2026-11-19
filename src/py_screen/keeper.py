@@ -15,6 +15,7 @@ import asyncio
 import os
 import sys
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from . import platform, proto
@@ -22,6 +23,51 @@ from . import platform, proto
 RING_CAP = 2 * 1024 * 1024       # bytes of recent output kept per window for replay
 HIGH_WATER = 4 * 1024 * 1024     # safety net: pause every pty while the brain lags this much
 CREDIT = 256 * 1024              # per window: stop reading a pty with this much un-acked output
+
+
+LOG_CAP = 20 << 20          # server.log past this, at a brain restart: cut to its last LOG_KEEP
+LOG_KEEP = 1 << 20
+
+
+def crash_wait(starts: list[float], now: float) -> float:
+    """How long to wait before starting the brain again after a crash: nothing for the
+    first few, then 5 s, doubling with each crash that came soon after the last start, to
+    60 s at most. Never giving up: the keeper holds the user's shells, a brain is only their
+    view. A brain that ran 30 s resets it (run_brain keeps only recent starts)."""
+    recent = [t for t in starts if now - t < 300]
+    n = len(recent)
+    if n < 5:
+        return 0.0
+    return min(60.0, 5.0 * 2 ** (n - 5))
+
+
+def cap_log(path: Path | None = None) -> None:
+    """A crash loop must not fill the disk (a tmpfs run dir is RAM): when stderr, the server
+    log, is a file past LOG_CAP, keep its last LOG_KEEP. stderr is write-only (opened to
+    append), so the tail is read through the log's path, when that is still the same file;
+    one already unlinked (its dir removed) is cut to nothing. The writers append (O_APPEND),
+    so they go on at the new end."""
+    import stat
+    try:
+        fd = sys.stderr.fileno()
+        st = os.fstat(fd)
+    except (OSError, ValueError, AttributeError):
+        return
+    if not stat.S_ISREG(st.st_mode) or st.st_size <= LOG_CAP:
+        return
+    tail = b""
+    try:
+        with open(path or proto.runtime_dir() / "server.log", "rb") as f:
+            if os.fstat(f.fileno()).st_ino == st.st_ino:
+                f.seek(max(0, st.st_size - LOG_KEEP))
+                tail = f.read(LOG_KEEP)
+    except OSError:
+        pass
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, b"[server.log cut: it passed %d MB in a crash loop]\n" % (LOG_CAP >> 20) + tail)
+    except OSError:
+        pass
 
 
 def log(*a: object) -> None:
@@ -216,12 +262,16 @@ class Keeper:
             if code == proto.RELOAD_EXIT:           # asked for: never throttled
                 log("brain reload")
                 continue
-            now = time.monotonic()                  # a crash: throttle a crash loop
-            self.brain_starts = [t for t in self.brain_starts if now - t < 10] + [now]
-            log("brain exited", code, "- starting it again")
-            if len(self.brain_starts) >= 5:
-                log("brain crashed 5 times in 10 s; waiting 5 s")
-                await asyncio.sleep(5)
+            now = time.monotonic()                  # a crash: back off, and keep the log
+            ran = now - (self.brain_starts[-1] if self.brain_starts else now)
+            if ran >= 30:                           # it ran a while: a new crash, not a loop
+                self.brain_starts = []
+            self.brain_starts = [t for t in self.brain_starts if now - t < 300] + [now]
+            cap_log()
+            wait = crash_wait(self.brain_starts, now)
+            log("brain exited", code, "- starting it again" + (f" in {wait:.0f} s" if wait else ""))
+            if wait:
+                await asyncio.sleep(wait)
 
     async def main(self) -> None:
         path = proto.keeper_sock()
@@ -229,6 +279,8 @@ class Keeper:
         loop = asyncio.get_running_loop()
         platform.on_stop(loop, self.stopping.set)
         log("listening", path, "pid", os.getpid())
+        pidfile = proto.runtime_dir() / "keeper.pid"   # who to stop when nothing else answers
+        pidfile.write_text(f"{os.getpid()}\n", encoding="utf-8")
         brain_task = loop.create_task(self.run_brain())
         await self.stopping.wait()
         for x in list(self.wins.values()):
@@ -239,6 +291,11 @@ class Keeper:
         server.close()
         platform.cleanup(path)
         platform.cleanup(proto.brain_sock())
+        try:
+            if pidfile.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                pidfile.unlink()
+        except OSError:
+            pass
         log("bye")
 
 
