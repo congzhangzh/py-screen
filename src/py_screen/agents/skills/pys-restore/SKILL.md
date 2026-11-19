@@ -17,7 +17,7 @@ pys keeps its windows in memory. What outlives it:
 |---|---|
 | `pys-sessions save` | snapshot every window, only when something changed (or every 2 h) |
 | `pys-sessions list` / `show [SNAP]` | the snapshots; what one holds (`why` lines for a forensic one) |
-| `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then opens each window again: `claude <its flags> --resume <id>`, or a shell in the folder; title `↺<old title>` until the agent sets its own; skips a session that already runs |
+| `pys-sessions restore [SNAP] [--only W,W] [--yes]` | a dry run, then opens each window again: `claude <its flags> --resume <id>`, or a shell in the folder; title `↺<old title>` until the agent sets its own, back in its group; skips a session that already runs. `--only` takes old window numbers, groups or names (`--only pys,samvada`: a group, a word or the start of a title); without SNAP each name comes from the newest snapshot that has it with an agent session |
 | `pys-sessions forensic [--write]` | no snapshot of the dead server? rebuild it from its server record and from the evidence Claude Code leaves |
 | `pys-sessions install` | a systemd user timer running `save` every 2 minutes (Linux; elsewhere ON_CHANGE) |
 
@@ -27,16 +27,22 @@ pys keeps its windows in memory. What outlives it:
 2. Pick the snapshot. With no argument, `show` / `restore` take the last snapshot of an
    *earlier* pys server. No snapshot of the dead server, or one older than the loss? Run
    `pys-sessions forensic` and read every `why` line before you trust it; `--write` saves it.
-3. `pys-sessions restore <SNAP>` (the dry run) → show the user the table: old window → folder,
+3. **Restore exactly what was named.** The user named members or products ("the last samvada
+   and pys session")? `pys-sessions restore --only samvada,pys` (no SNAP): each name is looked
+   up across the snapshots, newest first, and the dry run says which snapshot each row comes
+   from. Every extra resumed session costs memory and, once woken, a whole context of tokens:
+   never restore everything when they named a few. A name that matches nothing stops it all;
+   one that matches several lists them all: show the rows and ask before `--yes`.
+4. Otherwise `pys-sessions restore <SNAP>` (the dry run) → show the user the table: old window → folder,
    title, session, and the git branch it was on. A `⚠ folder gone` line means a worktree was
    removed since: it prints the `git worktree add` that brings it back; ask before running it. Say for each row whether it comes from a snapshot (sure) or forensic (a
    guess with evidence).
-4. On the user's go (or when they asked for the restore in so many words), add `--yes`;
+5. On the user's go (or when they asked for the restore in so many words), add `--yes`;
    `--only` leaves out windows they don't want.
-5. Check: `pys ls` (or `pys-agents`) shows the new windows. A resumed claude waits, idle, until
+6. Check: `pys ls` (or `pys-agents`) shows the new windows. A resumed claude waits, idle, until
    spoken to: a resume sends no prompt. Tell the user where each window's last screen is
    (`zless <snapshot>/screen-N.txt.gz`).
-6. Make sure the next loss is covered: `ON_CHANGE = ["pys-sessions", "save", "--quiet"]` in
+7. Make sure the next loss is covered: `ON_CHANGE = ["pys-sessions", "save", "--quiet"]` in
    `~/.config/pys/config.py` (a snapshot at each change and right before a kill), and/or the
    timer (`systemctl --user list-timers pys-sessions.timer`, else `pys-sessions install`).
 

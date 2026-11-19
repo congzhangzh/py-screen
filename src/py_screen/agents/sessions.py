@@ -8,7 +8,10 @@ running in it, its last screen) outside pys, and open them again after pys died.
   pys-sessions restore [SNAP] [--only W,W] [--yes]
                                      open its windows again: `claude <its flags> --resume`
                                      or a shell in the same folder, with the same title; a
-                                     dry run without --yes
+                                     dry run without --yes. --only takes old window numbers,
+                                     groups or names (`--only pys,samvada`: a group, or a word
+                                     or the start of a title); without SNAP a name is looked
+                                     up across snapshots, newest first
   pys-sessions forensic [--write]    no snapshot? rebuild the last dead pys server's windows
                                      from its server record (windows, folders, titles) and,
                                      for the Claude sessions, from server.log, Claude's
@@ -287,23 +290,111 @@ def titled_by_agent(wid: int) -> bool:
     return any(x["wid"] == wid and x.get("agent_title") for x in ws)
 
 
-def cmd_restore(a) -> int:
-    s = pick(a.snap)
-    d = json.loads((s / "windows.json").read_text(encoding="utf-8"))
-    only = {int(x) for x in a.only.split(",")} if a.only else None
-    live = live_agent_sessions()
-    plan = []
-    for w in d["windows"]:
-        if only is not None and w["wid"] not in only:
+def only_tokens(spec: str | None) -> list[str]:
+    return [t.strip() for t in (spec or "").split(",") if t.strip()]
+
+
+def names_of(w: dict) -> list[str]:
+    """What a token can name in a window: its titles, its name, its agent's name."""
+    return [x for x in (w.get("agent_title"), w.get("title"), w.get("name"),
+                        (w.get("agent") or {}).get("name")) if x]
+
+
+def matches(w: dict, token: str) -> bool:
+    """token names w: its group (whole), or a title or name that starts with it or has it
+    as a word (`samvada` names `po-samvada-g2 busy`, `po-pys` names `po-pys-g1 free`)."""
+    t = token.lower()
+    if (w.get("group") or "").lower() == t:
+        return True
+    return any(n.lower().startswith(t) or t in re.split(r"[^0-9a-z]+", n.lower())
+               for n in names_of(w))
+
+
+def find_named(token: str, live: set[str], now: int | None) -> tuple[Path, list[dict]] | None:
+    """The newest snapshot with a window token names that has an agent session, and those
+    windows. A snapshot of this pys server counts only for a session that no longer runs
+    (one that runs is here already; an earlier server's copy says so as a skip)."""
+    for snap in reversed(snapshots()):
+        try:
+            d = json.loads((snap / "windows.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             continue
+        ws = [w for w in d["windows"] if w.get("agent") and matches(w, token)]
+        if d.get("server_pid") == now:
+            ws = [w for w in ws if w["agent"]["session"] not in live]
+        if ws:
+            return snap, ws
+    return None
+
+
+def restore_plan(a, live: set[str]) -> list[tuple[Path, dict]]:
+    """(snapshot, window) to open, in order. With SNAP (or numbers only): that one snapshot.
+    A name without SNAP: looked up across snapshots (find_named). A token that names
+    nothing stops it all, before anything opens."""
+    toks = only_tokens(a.only)
+    nums = {int(t) for t in toks if t.isdigit()}
+    names = [t for t in toks if not t.isdigit()]
+    out: list[tuple[Path, dict]] = []
+    if a.snap or not names:
+        s = pick(a.snap)
+        ws = json.loads((s / "windows.json").read_text(encoding="utf-8"))["windows"]
+        for t in toks:
+            if not any((w["wid"] == int(t)) if t.isdigit() else matches(w, t) for w in ws):
+                sys.exit(f"pys-sessions: --only {t!r} names no window in {s.name} "
+                         "(`pys-sessions show` lists them); nothing opened")
+        out = [(s, w) for w in ws if not toks or w["wid"] in nums
+               or any(matches(w, t) for t in names)]
+        return out
+    now = current_server_pid()
+    if nums:
+        s = pick(None)
+        ws = json.loads((s / "windows.json").read_text(encoding="utf-8"))["windows"]
+        for n in sorted(nums):
+            w = next((w for w in ws if w["wid"] == n), None)
+            if w is None:
+                sys.exit(f"pys-sessions: --only {n} names no window in {s.name}; nothing opened")
+            out.append((s, w))
+    for t in names:
+        found = find_named(t, live, now)
+        if found is None:
+            sys.exit(f"pys-sessions: --only {t!r} names no window with an agent session in any "
+                     "snapshot (`pys-sessions list`, `show`); nothing opened")
+        out.extend((found[0], w) for w in found[1])
+    seen, plan = set(), []
+    for s, w in out:                       # a window two tokens name: once
+        key = (w.get("agent") or {}).get("session") or (s.name, w["wid"])
+        if key not in seen:
+            seen.add(key)
+            plan.append((s, w))
+    return plan
+
+
+def cmd_restore(a) -> int:
+    live = live_agent_sessions()
+    rows = restore_plan(a, live)
+    snaps = {s for s, _ in rows}
+    many = len(snaps) > 1
+    plan = []
+    for s, w in rows:
         ag = w.get("agent")
         if ag and ag["session"] in live:
-            print(f"  skip win {w['wid']}: {ag['kind']} {ag['session'][:8]} is already running")
+            print(f"  skip win {w['wid']} ({label(w)[:26]}"
+                  + (f", from {s.name}" if many else "")
+                  + f"): {ag['kind']} {ag['session'][:8]} is already running")
             continue
-        plan.append(w)
-    print(f"restore from {s}:")
-    for w in plan:
+        plan.append((s, w))
+    if not rows:
+        s = pick(a.snap)
+        print(f"restore from {s}: nothing in it")
+        return 0
+    if not plan:
+        print("nothing to open: every window named runs already")
+        return 0
+    print(f"restore from {next(iter(snaps))}:" if not many else "restore, each from its snapshot:")
+    for s, w in plan:
         print(f"  win {w['wid']:>2} → new window  {label(w)[:26]:<26} {w.get('cwd')}  [{describe(w)}]")
+        if many:
+            print(f"           from {s.name}")
         if g := gitinfo.describe(w.get("git")):
             print(f"           {g}")
         if gone := folder_gone(w):
@@ -313,7 +404,7 @@ def cmd_restore(a) -> int:
     if not a.yes:
         print("dry run; add --yes to open them")
         return 0
-    for w in plan:
+    for s, w in plan:
         try:
             before = {x["wid"] for x in json.loads(pys("ls", "--json"))["windows"]}
         except (RuntimeError, ValueError):
@@ -575,7 +666,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sp.add_parser("save"); p.add_argument("--quiet", action="store_true"); p.set_defaults(f=cmd_save)
     sp.add_parser("list").set_defaults(f=cmd_list)
     p = sp.add_parser("show"); p.add_argument("snap", nargs="?"); p.set_defaults(f=cmd_show)
-    p = sp.add_parser("restore"); p.add_argument("snap", nargs="?"); p.add_argument("--only")
+    p = sp.add_parser("restore"); p.add_argument("snap", nargs="?")
+    p.add_argument("--only", metavar="W,W", help="only these: old window numbers, groups, or names "
+                   "(a word or the start of a title: pys,samvada); without SNAP, each name from "
+                   "the newest snapshot that has it with an agent session")
     p.add_argument("--yes", action="store_true"); p.set_defaults(f=cmd_restore)
     p = sp.add_parser("forensic"); p.add_argument("--write", action="store_true"); p.set_defaults(f=cmd_forensic)
     sp.add_parser("install").set_defaults(f=cmd_install)
