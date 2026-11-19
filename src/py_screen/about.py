@@ -22,7 +22,7 @@ SLOGAN = f"{MOTTO} · by CZ, an engineer for engineers, near the magnet"
 def _git(repo: Path, *args: str) -> str:
     try:
         r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
-                           timeout=3)
+                           encoding="utf-8", errors="replace", timeout=3)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""

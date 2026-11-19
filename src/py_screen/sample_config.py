@@ -236,7 +236,7 @@ class Space:
         if fs == "zfs":
             try:
                 r = subprocess.run(["zfs", "get", "-Hpo", "value", "compressratio", dev],
-                                   capture_output=True, text=True, timeout=5)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
                 out += f" ×{float(r.stdout):.2f}" if r.returncode == 0 else ""
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass                   # no zfs command, or an answer we can't read

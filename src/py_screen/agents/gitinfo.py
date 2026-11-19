@@ -23,10 +23,13 @@ ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
 
 
 def git(cwd: str, *args: str) -> str | None:
+    """git's output, as UTF-8 whatever the locale: git writes branch names, commit subjects
+    and paths in UTF-8, and Python 3.14 on Windows would read a pipe in the code page (GBK
+    on a Chinese one: a UnicodeDecodeError in subprocess's _readerthread)."""
     try:
         r = subprocess.run(["git", "--no-optional-locks", "-C", cwd, *args],
-                           capture_output=True, text=True, timeout=TIMEOUT,
-                           env={**os.environ, **ENV})
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=TIMEOUT, env={**os.environ, **ENV})
     except (OSError, subprocess.TimeoutExpired):
         return None
     return r.stdout if r.returncode == 0 else None

@@ -141,7 +141,8 @@ def from_uv_cache() -> bool:
     """Runs from uv's cache (uvx), which `uv cache clean` empties."""
     import subprocess
     try:
-        r = subprocess.run(["uv", "cache", "dir"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["uv", "cache", "dir"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return False
     cache = r.stdout.strip()
