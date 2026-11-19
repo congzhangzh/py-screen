@@ -100,9 +100,13 @@ def window_group(wid: str) -> str | None:
     from .. import proto
     if s := os.environ.get("PYS_SESSION"):
         os.environ["PYS_DIR"] = s                 # the window's own session, not a default
+    # a hook must never fail or make anything: no server socket, no question (runtime_dir()
+    # would make the dir, and a path too long for AF_UNIX raises SystemExit there)
+    if os.name == "posix" and not (proto.runtime_dir_path() / "brain.sock").exists():
+        return None
     try:
         r = asyncio.run(proto.rpc({"cmd": "group", "wid": int(wid)}, timeout=1.0))
-    except Exception:
+    except (Exception, SystemExit):
         return None
     return (r.get("group") or "") if r.get("ok") else None
 

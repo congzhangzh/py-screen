@@ -177,3 +177,12 @@ def test_the_command_is_also_named_like_the_package() -> None:
     eps = {e.name: e.value for e in entry_points(group="console_scripts")
            if e.value.startswith("py_screen")}
     assert eps.get("py-screen") == eps.get("pys") == "py_screen:main"
+
+
+def test_the_hook_never_fails_on_a_runtime_dir_too_long(tmp_path: Path) -> None:
+    """A PYS_DIR past AF_UNIX's 104 bytes (macOS's temp dirs are long): the hook still
+    answers, and makes no dir."""
+    long_dir = tmp_path / ("x" * 120)
+    r = hook(tmp_path, PYS_WINDOW="4", PYS_DIR=str(long_dir))
+    assert r.returncode == 0 and "window 4" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert not long_dir.exists()

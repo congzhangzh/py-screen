@@ -117,7 +117,10 @@ def test_yes_opens_only_the_named_window_on_a_second_server(env, tmp_path):
         win(4, "notes-shell", "pys", None, cwd=str(tmp_path)),
         win(5, "other-shell", None, None, cwd=str(tmp_path))])
     pys = [sys.executable, "-m", "py_screen"]
-    try:
+    from harness import session_dir
+    from stopper import stop_keepers
+    env = dict(env, PYS_DIR=str(session_dir("restoreonly")))   # short: AF_UNIX takes 104 bytes,
+    try:                                                          # macOS's tmp path is longer
         r = restore(env, "20261119-170000", "--only", "notes", "--yes")
         assert r.returncode == 0 and "opened win" in r.stdout, r.stdout + r.stderr
         ls = json.loads(subprocess.run(pys + ["ls", "--json"], env=env, capture_output=True,
@@ -126,6 +129,9 @@ def test_yes_opens_only_the_named_window_on_a_second_server(env, tmp_path):
             == [("↺notes-shell", "pys")]
     finally:
         subprocess.run(pys + ["kill"], env=env, capture_output=True, timeout=30)   # its own server
+        stop_keepers(Path(env["PYS_DIR"]))
+        import shutil
+        shutil.rmtree(env["PYS_DIR"], ignore_errors=True)
 
 
 # ---- after review: matching, this server's snapshots, odd input ------------------------

@@ -43,10 +43,15 @@ def runtime_dir() -> Path:
     return p
 
 
-def keeper_sock_path() -> Path:
-    """keeper.sock's path, without making the runtime dir (runtime_dir() makes it)."""
+def runtime_dir_path() -> Path:
+    """The runtime dir's path, without making it or checking it (runtime_dir() does both)."""
     d = os.environ.get("PYS_DIR")
-    return (Path(d) if d else platform.runtime_base() / "pys") / "keeper.sock"
+    return Path(d) if d else platform.runtime_base() / "pys"
+
+
+def keeper_sock_path() -> Path:
+    """keeper.sock's path, without making the runtime dir."""
+    return runtime_dir_path() / "keeper.sock"
 
 
 def keeper_sock() -> Path:
