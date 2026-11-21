@@ -80,10 +80,13 @@ def new_env(pairs: list[str]) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser(prog="pys", description="py-screen: a terminal workspace")
     sub = p.add_subparsers(dest="cmd")
-    at = sub.add_parser("attach", help="attach, starting the server if needed (default)")
+    at = sub.add_parser("attach", help="attach, starting the server if needed (default)",
+                        description="Every client has its own current window and splits. The "
+                        "windows a client shows take its size while it is the client used last "
+                        "(as tmux's window-size latest).")
     at.add_argument("--guest", action="store_true",
-                    help="a second screen (a phone, a web terminal): it has its own current "
-                         "window, and never resizes a window another client shows")
+                    help="a second screen (a phone, a web terminal): it never resizes a window "
+                         "another client shows; it sees that one cropped")
     ls = sub.add_parser("ls", help="list windows")
     ls.add_argument("--json", action="store_true")
     s = sub.add_parser("send", help="type text into a window")
