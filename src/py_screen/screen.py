@@ -38,6 +38,11 @@ OSC52_MAX = 1 << 20
 # number is ConEmu's family instead (9;4 a progress bar, 9;9 the shell's folder at every
 # prompt), so it is not one. _vterm.c's notifies() keeps the same rule.
 _CONEMU = re.compile(r"[0-9]+(;|\Z)")
+# Each OSC 9 and 777 is also kept whole for the brain (take_oscs), which passes notifications
+# and ConEmu's progress (9;4) on to the terminal you attached from: one longer than
+# OSC_NOTE_MAX is not kept, and at most OSCS_MAX between two takes. _vterm.c has the same.
+OSC_NOTE_MAX = 4096
+OSCS_MAX = 64
 
 
 def notifies(command: int, payload: str) -> bool:
@@ -103,6 +108,7 @@ class Screen(pyte.Screen):
         self.history: deque = deque(maxlen=max(0, scrollback))
         self.pushed = 0                       # lines ever pushed (counts on when full)
         self.alerts = 0                       # bells and notifications (OSC 9, 777)
+        self.oscs: list[tuple[int, str]] = []  # whole OSC 9 and 777 payloads, for the brain
         super().__init__(columns, lines)
         self._cells: dict[pyte.screens.Char, _Cells] = {}
         Char = pyte.screens.Char
@@ -319,8 +325,11 @@ class Stream(pyte.ByteStream):
         if self._osc_cmd == 52:
             if raw:
                 self.clip = raw.encode(errors="replace")
-        elif self._osc_len <= OSC52_MAX and notifies(self._osc_cmd, raw):
-            self.listener.alerts += 1
+        else:
+            if self._osc_len <= OSC52_MAX and notifies(self._osc_cmd, raw):
+                self.listener.alerts += 1
+            if self._osc_len <= OSC_NOTE_MAX and len(self.listener.oscs) < OSCS_MAX:
+                self.listener.oscs.append((self._osc_cmd, raw))
         self._osc = None
         return m.end()
 

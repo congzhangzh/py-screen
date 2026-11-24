@@ -63,6 +63,9 @@ CHANGE_DELAY = 2.0               # seconds from a window change to the server re
 EXIT_GUARD = 1.0
 EXIT_GUARD_GAP = 0.4
 EXIT_GUARD_MAX = 3.0
+# OSC 9;4 states by how much they want you, for the one progress a client's terminal shows:
+# error (2) > paused (4) > normal (1) > indeterminate (3).
+PROGRESS_RANK = {2: 3, 4: 2, 1: 1, 3: 0}
 START_FAIL = 2.0                 # a window that ends with an error this soon ended at once
 CAPTION_TIMEOUT = 5.0            # seconds one CAPTION update may take; then the old text stays
 HOOK_TIMEOUT = 60.0              # an ON_CHANGE run after a change is killed after this
@@ -209,6 +212,8 @@ class Window:
     group: str | None = None
     attn_at: float = 0.0
     alert: bool = False          # its app rang since the brain last looked (term.take_alert)
+    notes: list = field(default_factory=list)   # (title, body) its app sent, to pass on
+    progress: tuple[int, int] | None = None      # its app's last OSC 9;4: (state, percent)
     born: float = 0.0            # when this brain spawned it (0: replayed, older)
 
     @classmethod
@@ -234,14 +239,24 @@ class Window:
         if replayed:                             # a copy in there was made long ago:
             self.term.feed(data[:replayed])      # replaying it must not copy it again,
             self.term.take_osc52()               # nor ring again (the state came back
-            self.term.take_alert()               # with load_state)
+            self.term.take_alert()               # with load_state), nor notify again;
+            self.take_oscs(replayed=True)        # its progress is state: it comes back
         self.term.feed(data[replayed:])
+        self.take_oscs()
         raw = self.term.take_osc52()
         if raw:
             self.clip = term.osc52(raw) or self.clip
         if self.term.take_alert():
             self.alert = True
         return len(data) - replayed
+
+    def take_oscs(self, replayed: bool = False) -> None:
+        """Its app's notifications (to pass on) and progress (OSC 9;4), from the term."""
+        for command, payload in self.term.take_oscs():
+            if (p := term.progress(command, payload)) is not None:
+                self.progress = p if p[0] else None
+            elif not replayed and (n := term.note(command, payload)):
+                self.notes.append(n)
 
 
 @dataclass
@@ -287,6 +302,7 @@ class Client:
     captions: dict = field(default_factory=dict)   # its panes' captions, last frame
     seen: float = 0.0             # when it last attached, resized or typed
     copy_wid: int | None = None   # the window this client's copy mode is on
+    progress: tuple[int, int] | None = None   # the OSC 9;4 last sent to its terminal
 
 
 class Brain:
@@ -600,14 +616,61 @@ class Brain:
     def parse(self, w: Window, n: int) -> int:
         """w.parse, and pass on what its app copied. Any window may copy, shown or not,
         like any terminal tab: the app is the one that decides."""
+        was = w.progress
         acked = w.parse(n)
         if w.clip is not None:
             self.copied(w.clip)
             w.clip = None
+        if w.notes:
+            self.forward_notes(w)
+        if w.progress != was:
+            for c in self.clients:
+                self.send_progress(c)
         if w.alert:
             w.alert = False
             self.attend(w, "ask", "bell")
         return acked
+
+    # ---- notifications and progress, passed on to the terminal you attached from ----
+    def forward_notes(self, w: Window) -> None:
+        """w's app sent notifications (OSC 9, OSC 777;notify). Besides its mark (attend),
+        each goes to every client whose current window is another one, as OSC
+        777;notify;<title>;<body>, the title saying which window: Ghostty, iTerm2, Windows
+        Terminal, foot show it as a toast or a tab dot; a terminal without them ignores it.
+        The window in front of a client isn't passed on to it, as a terminal doesn't
+        notify for its selected tab. FORWARD_NOTIFY = False keeps them in pys."""
+        notes, w.notes = w.notes, []
+        if not self.cfg.forward_notify:
+            return
+        out = "".join("\x1b]777;notify;" + term.clean(f"{w.name}: {t}" if t else w.name,
+                                                      term.NOTE_TITLE_MAX).replace(";", ",")
+                      + ";" + b + "\x07" for t, b in notes).encode("utf-8")
+        for c in self.clients:
+            if not c.writer.is_closing() and c.view.layout.focus.wid != w.wid:
+                c.writer.write(proto.pack(proto.DATA, 0, out))
+
+    def progress_for(self, c: Client) -> tuple[int, int]:
+        """The one progress c's terminal shows (OSC 9;4): its current window's when that
+        reports one, else the most severe of all windows' (error, paused, normal, busy),
+        the highest percent among equals; (0, 0), none, when no window reports one or
+        FORWARD_NOTIFY is False."""
+        if not self.cfg.forward_notify:
+            return 0, 0
+        w = self.wins.get(c.view.layout.focus.wid) if c.view.layout.focus.wid is not None else None
+        if w and w.progress:
+            return w.progress
+        ps = [x.progress for x in self.wins.values() if x.progress]
+        return max(ps, key=lambda p: (PROGRESS_RANK[p[0]], p[1])) if ps else (0, 0)
+
+    def send_progress(self, c: Client, want: tuple[int, int] | None = None) -> None:
+        """Tell c's terminal its progress when it changed (a window's report, a switch, a
+        window that ended); once after attaching, so a bar left from before goes."""
+        want = self.progress_for(c) if want is None else want
+        if want == c.progress or c.writer.is_closing():
+            return
+        c.progress = want
+        osc = f"\x1b]9;4;{want[0]};{want[1]}\x07" if want[0] else "\x1b]9;4;0\x07"
+        c.writer.write(proto.pack(proto.DATA, 0, osc.encode("ascii")))
 
     # ---- attention: a window whose app waits for you ---------------------------
     def attend(self, w: Window, level: str | None, why: str = "") -> bool:
@@ -1534,6 +1597,7 @@ class Brain:
         if c.writer.transport.get_write_buffer_size() > CLIENT_HIGH_WATER:
             c.stale = True                        # slow client: skip, redraw fully later
             return
+        self.send_progress(c)                     # its current window may have changed
         vc, vr = c.cols, c.rows
         all_panes = self.layout.panes()
         dirty_rows, whole_panes = [], []
@@ -2111,6 +2175,7 @@ class Brain:
         elif key.isdigit():
             self.select(int(key))
         elif key == "d":
+            self.send_progress(c, (0, 0))         # no bar left behind in its terminal
             c.writer.write(proto.pack_ctl({"op": "detached"}))
             c.writer.close()
         elif key == "\x0c":
@@ -2309,6 +2374,7 @@ class Brain:
                                  "history": w.term.history, "copy": w.copy is not None,
                                  "attn": w.attn, "attn_why": w.attn_why or None,
                                  "attn_at": w.attn_at or None, "group": w.group,
+                                 "progress": list(w.progress) if w.progress else None,
                                  "size": [w.term.columns, w.term.lines]}
                                 for w in (self.wins[i] for i in self.order)],
                     "panes": [{"wid": p.wid, "x": p.x, "y": p.y, "w": p.w, "h": p.h,

@@ -99,6 +99,12 @@ typedef struct {
     long alerts;
     char osc_head[16];
     size_t osc_head_len, osc_len;
+    /* Each OSC 9 and 777 whole, for the brain to pass on (take_oscs): a list of (number,
+     * payload) since the last take, or NULL; the one still arriving; screen.py's rule. */
+    PyObject *oscs;
+    char *note_next;
+    size_t note_len, note_cap;
+    int note_big;
 } TermObject;
 
 /* ---- shared helpers ------------------------------------------------------------- */
@@ -158,6 +164,9 @@ static void take_title(TermObject *t, VTermStringFragment f)
 
 /* A copy past this is dropped; screen.OSC52_MAX says why this number. */
 #define OSC52_MAX (1 << 20)
+/* screen.OSC_NOTE_MAX and OSCS_MAX. */
+#define OSC_NOTE_MAX 4096
+#define OSCS_MAX 64
 
 /* An OSC 9 or 777 that asks for attention; screen.notifies has the same rule and says why.
  * head: the first head_len bytes of the payload, len: all of it. */
@@ -187,6 +196,27 @@ static int fb_osc(int command, VTermStringFragment f, void *user)
         t->osc_len += f.len;
         if (f.final && notifies(command, t->osc_head, t->osc_head_len, t->osc_len))
             t->alerts++;
+        if (f.initial) {
+            t->note_len = 0;
+            t->note_big = 0;
+        }
+        if (t->note_len + f.len > OSC_NOTE_MAX)
+            t->note_big = 1;
+        if (!t->note_big)
+            append(&t->note_next, &t->note_len, &t->note_cap, f.str, f.len);
+        if (f.final && !t->note_big) {
+            if (!t->oscs)
+                t->oscs = PyList_New(0);
+            if (t->oscs && PyList_GET_SIZE(t->oscs) < OSCS_MAX) {
+                PyObject *e = Py_BuildValue("(iN)", command, PyUnicode_DecodeUTF8(
+                    t->note_next ? t->note_next : "", (Py_ssize_t)t->note_len, "replace"));
+                if (!e || PyList_Append(t->oscs, e) < 0)
+                    PyErr_Clear();        /* out of memory: this one is lost, feed goes on */
+                Py_XDECREF(e);
+            }
+            if (!t->oscs)
+                PyErr_Clear();
+        }
         return 1;
     }
     if (command != 52)
@@ -835,6 +865,8 @@ static void Term_dealloc(TermObject *self)
     free(self->title_next);
     free(self->osc52_next);
     Py_XDECREF(self->osc52);
+    free(self->note_next);
+    Py_XDECREF(self->oscs);
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
@@ -1124,6 +1156,13 @@ static PyObject *Term_take_osc52(TermObject *self, PyObject *noargs)
     Py_RETURN_NONE;
 }
 
+static PyObject *Term_take_oscs(TermObject *self, PyObject *noargs)
+{
+    PyObject *l = self->oscs;
+    self->oscs = NULL;
+    return l ? l : PyList_New(0);
+}
+
 static PyObject *Term_take_alert(TermObject *self, PyObject *noargs)
 {
     long n = self->alerts;
@@ -1147,6 +1186,8 @@ static PyMethodDef Term_methods[] = {
     {"mode", (PyCFunction)Term_mode, METH_O, "mode(n): private mode n (DECSET n) is on."},
     {"take_osc52", (PyCFunction)Term_take_osc52, METH_NOARGS,
      "What followed \"52;\" in the last OSC 52 since the last call, or None; clears it."},
+    {"take_oscs", (PyCFunction)Term_take_oscs, METH_NOARGS,
+     "Each OSC 9 and 777 since the last call, whole, as (number, payload); clears them."},
     {"take_alert", (PyCFunction)Term_take_alert, METH_NOARGS,
      "A bell or a notification (OSC 9, 777) came since the last call; clears it."},
     {NULL}

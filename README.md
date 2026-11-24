@@ -134,6 +134,15 @@ line still shows, as a short `7!`; the window list marks it too. `pys ls --json`
 `attn`, `attn_why` and `attn_at` per window. For Claude Code, `pys setup` adds the hooks
 that do it (below).
 
+**Your terminal sees them too.** A notification goes on to the terminal you attached from as
+OSC 777;notify, its title the window's (`build: done`), unless that window is the one in front
+of you there; and the windows' progress bars (OSC 9;4, ConEmu's, which installers, build tools
+and agents may write) become one: the window in front's when it has one, else the most urgent
+(error, then paused, then running, then busy), cleared when none is left or you detach. So
+Ghostty's tab dot and progress bar, a toast, Windows Terminal's taskbar progress show what an
+agent in any pys window does; a terminal without them ignores both. `FORWARD_NOTIFY = False`
+keeps them in pys. `pys ls --json` gives each window's `progress`, `[state, percent]`.
+
 Keys: the prefix is **`C-a`**, or **`C-]`** when you run `pys` inside GNU screen (`$STY`
 set), so the two don't fight. Override with `PREFIX` in the config or `PYS_PREFIX`.
 
@@ -299,7 +308,7 @@ a normal client gave it) back as soon as no guest shows it any more, shown or no
 Prefix `o`, or a click on ` pys `, opens the settings: the buttons (`BUTTONS`), the status
 rows the tabs may take (`STATUS_LINES`), the widgets (`SHOW_WIDGETS`), the mouse
 (`MOUSE`), the motto (`SLOGAN`), the product lines (`GROUPS`) and the caption line under a
-window (`CAPTIONS`), each with its value and where it comes from (default, config.py, set here). A
+window (`CAPTIONS`) and what goes on to your terminal's tab (`FORWARD_NOTIFY`), each with its value and where it comes from (default, config.py, set here). A
 click or Enter on a row changes it at once (the next value, round to the first); the status
 rows, 1 to 5, are a stepper, `− 2 +`: a click on `−` or `+`, `←` `→`, `-` `+` or a digit sets them
 (more than 5 in `config.py`, if you want). It keeps what you set in
@@ -365,6 +374,7 @@ SLOGAN = True                     # the motto, dim, in the status line's blank s
 GROUPS = True                     # product groups on lines of their own; False: the plain flow
 CAPTIONS = True                   # the caption line under a window; False: none while it fills
                                   # the screen (its text takes the row), a split keeps them
+FORWARD_NOTIFY = True             # notifications and progress go on to your terminal's tab
 ```
 
 **The status line grows a row when the tabs don't fit** (up to `STATUS_LINES`, 2 by

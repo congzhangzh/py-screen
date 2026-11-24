@@ -22,6 +22,11 @@ followed "52;" as the app wrote it (selections ; base64), osc52() decodes it.
 And both count the times the app asked for attention: a bell (BEL, not the one that ends
 an OSC) or a notification (OSC 9, OSC 777;notify; screen.notifies says which). take_alert()
 says whether any came since it was last called; the brain marks the window with it.
+
+Both keep each OSC 9 and 777 whole too (take_oscs(): (number, payload) pairs since the last
+call), so the brain can pass a notification (note()) and a progress bar (ConEmu's 9;4,
+progress()) on to the terminal you attached from: Ghostty, Windows Terminal, iTerm2 show
+them on the tab.
 """
 
 from __future__ import annotations
@@ -29,11 +34,12 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import re
 from typing import Protocol
 
 import pyte
 
-from .screen import Screen, Stream
+from .screen import Screen, Stream, notifies
 
 
 class Term(Protocol):
@@ -54,8 +60,45 @@ class Term(Protocol):
     def mode(self, n: int) -> bool: ...
     def take_osc52(self) -> bytes | None: ...
     def take_alert(self) -> bool: ...
+    def take_oscs(self) -> list[tuple[int, str]]: ...
     @property
     def display(self) -> list[str]: ...
+
+
+NOTE_TITLE_MAX = 128             # characters of a notification's title passed on
+NOTE_BODY_MAX = 512              # and of its body
+# ConEmu's progress, "9;4;<state>[;<percent>]": 0 none, 1 normal, 2 error, 3 indeterminate
+# (busy, no percent), 4 paused (a warning).
+_PROGRESS = re.compile(r"4;([0-4])(?:;([0-9]{0,3}))?;?\Z")
+_CONTROLS = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def clean(text: str, most: int) -> str:
+    """text without control characters (a sequence of its own ends at one), at most `most`
+    characters."""
+    text = _CONTROLS.sub(" ", text).strip()
+    return text if len(text) <= most else text[:most - 1] + "…"
+
+
+def note(command: int, payload: str) -> tuple[str, str] | None:
+    """(title, body) of a notification (OSC 9 "9;body", OSC 777 "777;notify;title;body"),
+    cleaned and cut; None if this OSC is none."""
+    if not notifies(command, payload):
+        return None
+    if command == 9:
+        title, body = "", payload
+    else:
+        _, title, body = (payload.split(";", 2) + ["", ""])[:3]
+    return clean(title, NOTE_TITLE_MAX), clean(body, NOTE_BODY_MAX)
+
+
+def progress(command: int, payload: str) -> tuple[int, int] | None:
+    """(state, percent) of a progress report (OSC 9;4), state 0 when it ends it; None if
+    this OSC is none."""
+    m = _PROGRESS.match(payload) if command == 9 else None
+    if not m:
+        return None
+    return int(m[1]), min(100, int(m[2] or 0))
 
 
 def osc52(raw: bytes) -> bytes | None:
@@ -163,6 +206,10 @@ class PyteTerm:
     def take_alert(self) -> bool:
         n, self.screen.alerts = self.screen.alerts, 0
         return n > 0
+
+    def take_oscs(self) -> list[tuple[int, str]]:
+        oscs, self.screen.oscs = self.screen.oscs, []
+        return oscs
 
     @property
     def title(self) -> str:

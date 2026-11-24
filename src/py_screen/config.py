@@ -25,6 +25,9 @@ Read by every brain start, so `pys reload` (C-a R) applies an edit. Example:
                                               # while it fills the screen (a split keeps them)
     GROUPS = True                             # product groups (pys group) on lines of their
                                               # own; False: one flow of tabs, as without them
+    FORWARD_NOTIFY = True                     # a window's notifications (OSC 9, 777) and its
+                                              # progress (OSC 9;4) go on to your terminal
+                                              # (Ghostty's tab dot and bar); False: pys only
     STATUS_LINES = 2                          # the window tabs wrap onto up to this many
                                               # status rows, only while one doesn't hold them
     ON_CHANGE = ["pys-sessions", "save", "--quiet"]   # run after windows change and
@@ -153,6 +156,7 @@ class Config:
     slogan: bool = True           # the motto, dim, in the status line's blank space
     groups: bool = True           # product lines on the status line; False: the plain flow
     captions: bool = True         # a lone pane's caption line; False: its text takes the row
+    forward_notify: bool = True   # notifications and progress go on to the outer terminal
     origin: dict = field(default_factory=dict)   # panel key → the file that set it
     on_change: list[str] | None = None   # argv run after windows change and before a kill
     kill_hook_timeout: float = KILL_HOOK_TIMEOUT
@@ -254,6 +258,7 @@ def load_config() -> Config:
     cfg.slogan = bool(ns.get("SLOGAN", True))
     cfg.groups = bool(ns.get("GROUPS", True))
     cfg.captions = bool(ns.get("CAPTIONS", True))
+    cfg.forward_notify = bool(ns.get("FORWARD_NOTIFY", True))
     try:
         cfg.scrollback = max(0, int(ns.get("SCROLLBACK", SCROLLBACK)))
     except (TypeError, ValueError):

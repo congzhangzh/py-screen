@@ -30,6 +30,8 @@ ROWS: list[tuple[str, str, str, tuple]] = [
     ("GROUPS", "groups", "product groups on lines of their own", (True, False)),
     ("CAPTIONS", "captions", "the caption line under a window (kept in a split)",
      (True, False)),
+    ("FORWARD_NOTIFY", "forward_notify",
+     "notifications and progress on to your terminal's tab", (True, False)),
 ]
 KEYS = [r[0] for r in ROWS]
 
