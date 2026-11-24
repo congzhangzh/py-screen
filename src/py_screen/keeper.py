@@ -12,7 +12,9 @@ same on Linux, macOS and Windows.
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
+import stat
 import sys
 import time
 from pathlib import Path
@@ -70,6 +72,29 @@ def log(*a: object) -> None:
     print(time.strftime("%H:%M:%S"), "keeper:", *a, file=sys.stderr, flush=True)
 
 
+def cannot_enter(d: str) -> str | None:
+    """Why this user can't start a program in folder d (None: it can)."""
+    try:
+        if not stat.S_ISDIR(os.stat(d).st_mode):
+            return "not a folder"
+    except OSError as e:
+        return e.strerror or str(e)
+    return None if os.access(d, os.X_OK) else os.strerror(errno.EACCES)
+
+
+def start_dir(cwd: str | None) -> tuple[str | None, str | None]:
+    """Where a new window starts: the folder asked for (the window it was opened from)
+    when this user can enter it, else the home folder, else the root, as tmux does; and
+    the line the new window shows to say so. A folder that can't be entered (gone, or
+    handed to another user, as a container's chown does) must not end the window at its
+    start: the shell's chdir failed, it exited 127 and nothing said why."""
+    if not cwd or (why := cannot_enter(cwd)) is None:
+        return cwd, None
+    home = os.path.expanduser("~")
+    to = home if cannot_enter(home) is None else os.path.abspath(os.sep)
+    return to, f"pys: cannot enter {cwd} ({why}); started in {to}\r\n"
+
+
 @dataclass
 class Win:
     wid: int
@@ -108,12 +133,16 @@ class Keeper:
         env.update(extra or {})
         env.update(PYS_WINDOW=str(wid), PYS_SESSION=os.path.realpath(proto.runtime_dir()))
         env.pop("PYS_DIR_INTERNAL", None)
+        cwd, note = start_dir(cwd)
         p = platform.spawn_pty(cmd, cwd, env, cols, rows)
         w = Win(wid, p.pid, p, cols, rows, cmd)
         self.wins[wid] = w
         p.start(lambda data: self.on_output(w, data), lambda code: self.reap(w, code))
         self.update_reading(w)
         log("spawned", wid, p.pid, cmd)
+        if note:                                    # after the brain hears "spawned"
+            log("window", wid, note.strip())
+            asyncio.get_running_loop().call_soon(self.on_output, w, note.encode("utf-8"))
         return w
 
     def update_reading(self, w: Win) -> None:

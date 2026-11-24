@@ -37,10 +37,20 @@ class PosixPty:
     def __init__(self, cmd: list[str], cwd: str | None, env: dict, cols: int, rows: int):
         pid, fd = pty.fork()                       # child: setsid + pty slave as ctty
         if pid == 0:
-            try:
-                if cwd:
-                    os.chdir(cwd)
+            try:                                   # the keeper checked cwd (start_dir);
+                if cwd:                            # if it went since, home, then the root
+                    for d in (cwd, os.path.expanduser("~"), "/"):
+                        try:
+                            os.chdir(d)
+                            break
+                        except OSError:
+                            pass
                 os.execvpe(cmd[0], cmd, env)
+            except BaseException as e:             # say why, in the window: the brain
+                try:                               # shows its last line when it ends
+                    os.write(2, f"pys: cannot start {cmd[0]}: {e}\r\n".encode("utf-8", "replace"))
+                except BaseException:
+                    pass
             finally:
                 os._exit(127)
         os.set_blocking(fd, False)

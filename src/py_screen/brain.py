@@ -63,6 +63,7 @@ CHANGE_DELAY = 2.0               # seconds from a window change to the server re
 EXIT_GUARD = 1.0
 EXIT_GUARD_GAP = 0.4
 EXIT_GUARD_MAX = 3.0
+START_FAIL = 2.0                 # a window that ends with an error this soon ended at once
 CAPTION_TIMEOUT = 5.0            # seconds one CAPTION update may take; then the old text stays
 HOOK_TIMEOUT = 60.0              # an ON_CHANGE run after a change is killed after this
 WHEEL_LINES = 3                  # rows per wheel notch: scrollback, or arrow keys for a
@@ -208,6 +209,7 @@ class Window:
     group: str | None = None
     attn_at: float = 0.0
     alert: bool = False          # its app rang since the brain last looked (term.take_alert)
+    born: float = 0.0            # when this brain spawned it (0: replayed, older)
 
     @classmethod
     def new(cls, wid: int, pid: int, cmd: list[str], cols: int, rows: int,
@@ -430,6 +432,7 @@ class Brain:
             asyncio.get_running_loop().create_task(self.nudge(list(self.wins.values())))
         elif op == "spawned":
             w = self.add_window(m)
+            w.born = time.monotonic()
             fut = self.pending.pop(m.get("tag") or "", None)
             if fut and not fut.done():
                 fut.set_result(w)
@@ -438,7 +441,7 @@ class Brain:
             if fut and not fut.done():
                 fut.set_exception(OSError(m.get("error")))
         elif op == "exited":
-            self.remove_window(m["wid"])
+            self.remove_window(m["wid"], m.get("code"))
 
     def add_window(self, x: dict) -> Window:
         w = Window.new(x["wid"], x["pid"], x["cmd"], x["cols"], x["rows"], self.cfg.scrollback)
@@ -452,7 +455,21 @@ class Brain:
         self.changed()
         return w
 
-    def remove_window(self, wid: int) -> None:
+    def start_failure(self, wid: int, code: int | None) -> str | None:
+        """What a window that ended within START_FAIL s of its start, with an error, last
+        wrote (the line pys's own child writes when it can't start the program), else its
+        exit code; None for a window that ran."""
+        w = self.wins.get(wid)
+        if w is None or not code or time.monotonic() - w.born > START_FAIL:
+            return None
+        self.parse_all(w)
+        lines = [l.strip() for l in w.term.display if l.strip()]
+        return f"{lines[-1]} (exit {code})" if lines else f"exit {code}"
+
+    def remove_window(self, wid: int, code: int | None = None) -> None:
+        failed = self.start_failure(wid, code)
+        if failed:
+            log(f"window {wid} ended at once: {failed}")
         was_focused = self.layout.focus.wid == wid
         self.shrink_all()
         self.wins.pop(wid, None)
@@ -479,6 +496,8 @@ class Brain:
             return
         if was_focused and self.layout.focus.wid is not None:
             self.hold_keys(wid)
+            if failed and self.guard:
+                self.guard["failed"] = failed
         self.changed()
         self.relayout()
 
@@ -1137,6 +1156,9 @@ class Brain:
                                          "other key ends", cols) + "\x1b[0m"
         if g := self.guard:
             held = f"{g['held']} key{'s' if g['held'] != 1 else ''} held, " if g["held"] else ""
+            if g.get("failed"):
+                return "\x1b[0;30;43m" + fit(
+                    f" window {g['ended']} ended at once: {g['failed']} ", cols) + "\x1b[0m"
             return "\x1b[0;30;43m" + fit(
                 f" window {g['ended']} ended: {held}keys wait a moment before they go to "
                 f"window {g['now']} ", cols) + "\x1b[0m"
