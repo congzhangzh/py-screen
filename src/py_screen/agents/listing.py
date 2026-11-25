@@ -13,6 +13,15 @@
                                       a member finds its product owner or release manager
   pys-agents --group G, where --group G
                                       only the windows of that group
+  pys-agents to NAME... | --group G | --all [--json]
+                                      whom a message goes to: each agent's window, its
+                                      member name, its address (the Claude session name
+                                      SendMessage takes) and its state; never the sender's
+                                      own window; a NAME with no agent running is listed
+                                      as not running
+  pys-agents hold NAME TEXT           keep TEXT for a member that is not running; it gets
+                                      it when it is back and names its window
+                                      (pys title --agent "NAME ...")
   pys-agents skills [--install [--dir DIR]]
                                       the agent skills that come with pys; --install links
                                       them into DIR (default ~/.claude/skills)
@@ -33,7 +42,7 @@ from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
 
-from .. import utf8_pipes
+from .. import mail, utf8_pipes
 from . import claude, gitinfo, procs
 
 SKILLS = Path(__file__).parent / "skills"
@@ -61,6 +70,7 @@ def agents() -> list[dict]:
         out.append({
             "window": w["wid"] if w else None,
             "title": (w.get("name") if w else None),
+            "agent_title": (w.get("agent_title") if w else None),
             "group": (w.get("group") if w else None),
             "titled_by_it": bool(w and w.get("agent_owner") == pid),
             "pid": pid, "session": s.get("sessionId"), "name": s.get("name"),
@@ -163,6 +173,89 @@ def cmd_team(a) -> int:
         (r["title"] or "-")[:28],
         f"claude {ag['name'] or (ag['session'] or '')[:8]} ({ag['state'] or '-'})"
         if (ag := r["agent"]) else "-") for r in rows])
+    return 0
+
+
+def member(title: str | None) -> str | None:
+    """A window's member name: its title's first word (`pys-po-g1 #12 busy` → pys-po-g1)."""
+    w = (title or "").split(" ", 1)[0]
+    return w or None
+
+
+def own_window() -> int | None:
+    here = os.environ.get("PYS_WINDOW")
+    return int(here) if here and here.isdigit() else None
+
+
+def recipients(names: list[str], group: str | None, every: bool,
+               live: list[dict], me: int | None) -> tuple[list[dict], list[str]]:
+    """The agents a message goes to, and the names that match no running agent. Only an
+    agent in a pys window counts (one outside pys has no window to name it), never the
+    sender's own window. A name matches a window's member name, its Claude session name or
+    its number, ignoring case."""
+    rows = [{"window": a["window"], "member": member(a.get("agent_title") or a["title"]),
+             "address": a["name"],
+             "session": a["session"], "state": a["state"], "group": a["group"]}
+            for a in live if a["window"] is not None and a["window"] != me]
+    if every:
+        return rows, []
+    if group is not None:
+        return [r for r in rows if r["group"] == group], []
+    out, missing = [], []
+    for n in names:
+        k = n.lower()
+        hit = [r for r in rows if k in ((r["member"] or "").lower(), (r["address"] or "").lower(),
+                                        str(r["window"]))]
+        if not hit:
+            missing.append(n)
+        out += [r for r in hit if r not in out]
+    return out, missing
+
+
+def cmd_to(a) -> int:
+    if sum((bool(a.names), a.group is not None, a.all)) != 1:
+        print("pys-agents to: name the agents, or --group G, or --all (one of them)",
+              file=sys.stderr)
+        return 2
+    rows, missing = recipients(a.names, a.group, a.all, agents(), own_window())
+    if a.json:
+        print(json.dumps({"to": rows, "not_running": missing}, indent=1, ensure_ascii=False))
+        return 0
+    if rows:
+        table(("WIN", "MEMBER", "ADDRESS", "STATE"), [
+            (str(r["window"]), r["member"] or "-", r["address"] or "-", r["state"] or "-")
+            for r in rows])
+        print("send it with SendMessage to each ADDRESS: it waits while one is busy")
+    elif not missing:
+        print("no agent to send to" + (f" in group {a.group}" if a.group else ""))
+    for n in missing:
+        print(f"{n}: not running; pys-agents hold {n} \"<text>\" keeps it until it is back")
+    return 0
+
+
+def sender() -> str:
+    """Who holds a message: the sender's member name, from its window's title; else its
+    Claude session's name; else its window."""
+    me = own_window()
+    if me is not None:
+        w = next((w for w in windows() if w["wid"] == me), None)
+        if w and (m := member(w.get("agent_title"))):
+            return m
+    pid = claude.agent_above(os.getpid())
+    s = claude.live_sessions().get(pid) if pid else None
+    if s and s.get("name"):
+        return s["name"]
+    return f"window {me}" if me is not None else "a process outside pys"
+
+
+def cmd_hold(a) -> int:
+    try:
+        m = mail.hold(a.name, a.text, sender())
+    except (ValueError, OSError) as e:
+        print(f"pys-agents hold: {e}", file=sys.stderr)
+        return 1
+    print(f"held for {a.name.lower()} from {m['from']}: it gets it when it names its window "
+          f"(pys title --agent \"{a.name.lower()} ...\")")
     return 0
 
 
@@ -313,6 +406,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--group", help="default: the group of the window this runs in")
     p.add_argument("--json", action="store_true")
     p.set_defaults(f=cmd_team)
+    p = sp.add_parser("to", help="whom a message goes to: names, a group, or every other agent")
+    p.add_argument("names", nargs="*", metavar="NAME",
+                   help="a member name (the title's first word), a Claude session name or a window")
+    p.add_argument("--group", help="every agent in this product group")
+    p.add_argument("--all", action="store_true", help="every agent but this window's")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(f=cmd_to)
+    p = sp.add_parser("hold", help="keep a message for a member that is not running")
+    p.add_argument("name")
+    p.add_argument("text")
+    p.set_defaults(f=cmd_hold)
     p = sp.add_parser("skills", help="the agent skills that come with pys")
     p.add_argument("--install", action="store_true")
     p.add_argument("--dir", default="~/.claude/skills")

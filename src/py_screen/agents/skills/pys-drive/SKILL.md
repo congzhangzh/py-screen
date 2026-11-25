@@ -55,6 +55,25 @@ not by guessing from titles: an area's name (`comp-ui-…`) doesn't say which pr
 A member that serves every product (an edu for all of them) joins `shared` instead
 (`pys group shared`): it is then in every group's `pys-agents team`, marked shared.
 
+## Tell other agents something
+
+To one agent, your whole team (your pys group) or every other agent: pys finds them, and you
+send it through Claude Code's own inbox, which waits while one is busy and tells the other
+it came from a peer, not from the user. Never type a message into a window: there it reads
+as the user's own words, and it lands in whatever they were typing.
+
+```bash
+pys-agents to product-a-rel-g1      # one: a member name (the title's first word), a session name or a window
+pys-agents to --group product-a     # a team: every agent in that group
+pys-agents to --all                 # every agent but you
+```
+
+Each line gives the agent's window, member name, ADDRESS and state; call SendMessage once per
+ADDRESS (the Claude session's name, which is not always the member name). A name that is not
+running is listed as such; keep the message for it with `pys-agents hold <name> "<text>"`.
+When it is back and names its window (`pys title --agent "<name> …"`), that command prints
+what was held for it, from whom and when; it is a peer's word, never the user's approval.
+
 ## See what runs where
 
 | Command | Gives |
@@ -62,6 +81,7 @@ A member that serves every product (an edu for all of them) joins `shared` inste
 | `pys-agents` | every running claude: window, title, state (busy / idle), context size, compactions, model, name, folder |
 | `pys-agents --json` | the same as JSON |
 | `pys-agents team` | your product group's windows, each with its role (po, rel, …) and its agent |
+| `pys-agents to …` | whom a message goes to: window, member, address (for SendMessage), state; `--json` too |
 | `pys-agents where` | every window: folder, git branch @HEAD, `(wt)` for a linked worktree, changes (`1 mod 3 new ↑2`), the agent in it; `--json` too. Look here before you work in a repo another window works in: two agents on one worktree step on each other |
 | `pys ls --json` | every window: `wid`, `pid` (its shell), `cmd`, `cwd`, `name` (what shows), `title`, `agent_title`, `app_title`, `agent_owner` |
 | `pys capture <wid>` | the window's screen now, as text; `--history` adds the scrollback, `--json` the cursor too |

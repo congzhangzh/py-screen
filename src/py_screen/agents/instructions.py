@@ -53,6 +53,7 @@ def rules() -> list[str]:
         f'Name your window at the start and when your work changes, short (about 24 characters): {pys} title --agent "<your name> <what you work on>" (a team member is named <context>-<role>-g<N>, e.g. "pys-po-g1 groups busy"). --agent makes this session its owner (pys finds it), so the title ends with it.',
         f"Put your window in its product's group when you start: {pys} group <product> (`{pys} group --list` shows the groups; a member that serves every product: {pys} group shared). A window opened from yours gets its group.",
         f"{agents} lists the agents and their windows; `{agents} where` each window's folder and git branch. Look before you work in a repo another window works in.",
+        f'To tell other agents something: `{agents} to <name>` (or `--group <product>`, or `--all`: every agent but you) gives each one\'s address; send it with SendMessage, which waits while one is busy. One that is not running: `{agents} hold <name> "<text>"`, and it gets it when it names its window. Never type a message into a window.',
         f'`{pys} capture <wid>` reads a window. Type into one only with the user\'s word and only when it is idle: the text first, then Enter on its own (`{pys} send --enter <wid> ""`).',
         f"Never `{pys} kill`, prefix Q, or a pkill that could match pys: they end every window, the user's and other agents' too.",
         "The pys-drive skill has the details; pys-restore brings windows back after pys died.",

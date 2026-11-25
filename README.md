@@ -518,6 +518,27 @@ with `--no-optional-locks`, so it never takes the index lock from under you. `--
 `git: {repo, top, common, worktree, branch, head, changed, untracked, ahead, behind}` per
 window.
 
+**`pys-agents to`**: whom a message goes to, when one agent has news for another, for its
+team or for every other agent:
+
+```
+$ pys-agents to --group product-a
+WIN  MEMBER            ADDRESS           STATE
+5    product-a-po-g1   product-a-07      idle
+6    product-a-rel-g1  product-a-rel-g1  busy
+send it with SendMessage to each ADDRESS: it waits while one is busy
+```
+
+A target is a member name (a title's first word), a Claude session name or a window, or
+`--group G` (a team is a pys group), or `--all` (every agent but the sender). The sender's
+own window is never in it. pys only finds them: the message goes through Claude Code's own
+inbox, which waits for a busy session and marks it as a peer's. pys never types a message into
+a window, where it would read as the user's words and land in what they were typing. For a
+member that is not running, `pys-agents hold <name> "<text>"` keeps it (in
+`~/.local/state/pys-mail/`, read messages kept beside it). The member gets it when it is back
+and names its window with `pys title --agent "<name> …"`: that command prints each held
+message with its sender (named by pys from the sender's window) and when.
+
 **`pys-sessions`**: keep what every window is, and open it all again after pys died (a
 kill, a crash, a reboot):
 

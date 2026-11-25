@@ -262,3 +262,10 @@ def main() -> None:
                   file=sys.stderr)
         elif a.cmd in ("ls", "new"):
             print(json.dumps(r))
+        if a.cmd == "title" and a.owner is not None and r.get("agent_title"):
+            # an agent names its window as it starts: the messages held for that member
+            # while it was not running (pys-agents hold) are its now
+            from . import mail
+            name = r["agent_title"].split(" ", 1)[0]
+            if ms := mail.take(name):
+                print(mail.show(name, ms))
